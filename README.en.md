@@ -5,8 +5,6 @@
 `idh` is the PC-side connector and MCP gateway for IOSDecryptHub. Use `connect` to set
 the device address, then bridge the device's Streamable HTTP MCP to local stdio MCP.
 
-Author: [taisuii](https://github.com/taisuii) · License: [MIT](./LICENSE)
-
 > The HTTP/MCP service has no authentication. Use it only on a trusted LAN; do not expose it to the public internet.
 
 ## Install
@@ -238,7 +236,7 @@ failure it suggests `pipx upgrade ios-decrypt-hub`.
 
 ## License
 
-[MIT](./LICENSE). Copyright (c) 2026 [taisuii](https://github.com/taisuii).
+[MIT](./LICENSE)
 
 ## Follow
 

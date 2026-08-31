@@ -5,8 +5,6 @@
 `idh` 是 IOSDecryptHub 的 PC 端连接与 MCP 网关。它通过 `connect` 手动指定设备地址，
 并把设备上的 Streamable HTTP MCP 转换为本地 stdio MCP。
 
-作者：[taisuii](https://github.com/taisuii) · 协议：[MIT](./LICENSE)
-
 > HTTP/MCP 服务没有身份认证，只能在可信局域网中使用，不要暴露到公网。
 
 ## 安装
@@ -226,7 +224,7 @@ idh update --yes    # 跳过确认直接升级
 
 ## 协议
 
-[MIT](./LICENSE)。Copyright (c) 2026 [taisuii](https://github.com/taisuii)。
+[MIT](./LICENSE)
 
 ## 关注
 
