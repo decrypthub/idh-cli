@@ -12,7 +12,7 @@ SETTINGS_VERSION = 1
 SETTINGS_PATH_ENV = "IDH_SETTINGS_PATH"
 
 DEFAULT_PROMPT_REGISTRY = (
-    "https://raw.githubusercontent.com/decrypthub/idh-cli/main/prompts/index.json"
+    "https://raw.githubusercontent.com/decrypthub/idh-cli/main/src/idh/prompts/index.json"
 )
 
 DEFAULTS: dict[str, Any] = {

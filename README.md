@@ -231,7 +231,7 @@ idh --force-update ...     # 本次运行强制检查
 自动升级会识别安装方式（`uv tool` / `pipx` / `pip`）并使用对应命令。
 MCP 网关暴露 `idh_list_skills` 和 `idh_get_skill`；提示词与 skills 的 registry
 地址由 `prompt_registry` 配置，默认从 `decrypthub/idh-cli` 的
-`prompts/index.json` 拉取，每 6 小时检查一次，可独立于 idh 发版更新。
+`src/idh/prompts/index.json` 拉取，每 6 小时检查一次，可独立于 idh 发版更新。
 
 环境变量：`IDH_AUTO_UPDATE=0`、`IDH_UPDATE_INTERVAL=...`、
 `IDH_PROMPT_INTERVAL=...`、`IDH_PROMPT_REGISTRY=...`。
