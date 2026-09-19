@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
-import subprocess
 import sys
 import tempfile
-import urllib.request
+import threading
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -30,6 +30,14 @@ from .gateway import (
 )
 from .http_mcp import MCPHTTPClient, MCPTransportError, probe_endpoint
 from .models import AppEndpoint
+from .prompts import maybe_update_prompts
+from .selfupdate import (
+    check_for_update,
+    detect_install_method,
+    maybe_auto_update,
+    run_upgrade,
+)
+from .settings import load_settings, update_settings
 
 PROBE_TIMEOUT = 3.0
 
@@ -87,6 +95,16 @@ def _add_endpoint_options(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="idh", description="IOSDecryptHub connection & MCP gateway")
     parser.add_argument("--version", action="version", version=f"idh {__version__}")
+    parser.add_argument(
+        "--no-auto-update",
+        action="store_true",
+        help="disable auto-update for this run",
+    )
+    parser.add_argument(
+        "--force-update",
+        action="store_true",
+        help="force an auto-update check for this run",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     connect = subparsers.add_parser("connect", help="save and connect a device address")
@@ -143,6 +161,13 @@ def build_parser() -> argparse.ArgumentParser:
     update = subparsers.add_parser("update", help="check for and upgrade idh to the latest version")
     update.add_argument("--check-only", action="store_true", help="only check the latest PyPI version, do not upgrade")
     update.add_argument("--yes", "-y", action="store_true", help="upgrade without confirmation")
+
+    settings = subparsers.add_parser("settings", help="view or change idh settings")
+    settings.add_argument("--json", action="store_true", help="output settings as JSON")
+    settings.add_argument("--auto-update", choices=("on", "off"), help="enable/disable automatic idh updates")
+    settings.add_argument("--update-interval", type=float, metavar="SECONDS", help="seconds between auto-update checks")
+    settings.add_argument("--prompt-interval", type=float, metavar="SECONDS", help="seconds between prompt/skill refreshes")
+    settings.add_argument("--prompt-registry", metavar="URL", help="prompt/skill registry index URL")
     return parser
 
 
@@ -495,26 +520,19 @@ def _run_export(args: argparse.Namespace) -> int:
     return 0
 
 
-def _latest_version() -> str | None:
-    try:
-        with urllib.request.urlopen(
-            "https://pypi.org/pypi/ios-decrypt-hub/json", timeout=5
-        ) as resp:
-            return json.load(resp).get("info", {}).get("version")
-    except Exception:  # noqa: BLE001 - fail silently on network errors
-        return None
-
-
 def _run_update(args: argparse.Namespace) -> int:
-    current = __version__
-    latest = _latest_version()
+    info = check_for_update()
+    current = info["current"]
+    latest = info["latest"]
     if not latest:
         print("idh: cannot check the latest PyPI version (network unreachable)", file=sys.stderr)
         return 1
-    if latest == current:
+    if not info["update_available"]:
         print(f"idh is already up to date ({current})")
         return 0
-    print(f"new version available: {current} → {latest}")
+    print(f"new version available: {current} -> {latest}")
+    method = detect_install_method()
+    print(f"install method: {method}")
     if args.check_only:
         return 0
     if not args.yes:
@@ -525,26 +543,66 @@ def _run_update(args: argparse.Namespace) -> int:
         if confirm.strip().lower() != "y":
             print("cancelled")
             return 0
-    try:
-        print(f"upgrading idh → {latest} ...")
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "ios-decrypt-hub"],
-            check=False,
-        )
-    except OSError as exc:
-        print(f"idh: upgrade failed: {exc}", file=sys.stderr)
+    print(f"upgrading idh -> {latest} ...")
+    ok, output = run_upgrade(method, capture=True)
+    if output:
+        print(output)
+    if not ok:
+        print(f"idh: upgrade failed: {output}", file=sys.stderr)
+        print(f"idh: run manually: {method} upgrade", file=sys.stderr)
         return 1
-    if result.returncode != 0:
-        print("idh: upgrade failed; run manually: pipx upgrade ios-decrypt-hub", file=sys.stderr)
-        return 1
-    print(f"upgrade complete, current version: {_latest_version() or latest}")
+    print(f"upgrade complete, current version: {latest}")
     return 0
+
+
+def _run_settings(args: argparse.Namespace) -> int:
+    changes: dict[str, object] = {}
+    if args.auto_update:
+        changes["auto_update"] = args.auto_update == "on"
+    if args.update_interval is not None:
+        changes["update_interval"] = max(0.0, args.update_interval)
+    if args.prompt_interval is not None:
+        changes["prompt_interval"] = max(0.0, args.prompt_interval)
+    if args.prompt_registry:
+        changes["prompt_registry"] = args.prompt_registry.strip()
+    settings = update_settings(**changes) if changes else load_settings()
+    if args.json:
+        print(json.dumps(settings, ensure_ascii=False, indent=2))
+    else:
+        print(f"auto_update: {str(settings['auto_update']).lower()}")
+        print(f"update_interval: {int(settings['update_interval'])}")
+        print(f"last_update_check: {settings['last_update_check']}")
+        print(f"last_update_version: {settings['last_update_version']}")
+        print(f"prompt_registry: {settings['prompt_registry']}")
+        print(f"prompt_interval: {int(settings['prompt_interval'])}")
+        print(f"last_prompt_check: {settings['last_prompt_check']}")
+    return 0
+
+
+def _run_auto_update(args: argparse.Namespace) -> None:
+    if getattr(args, "no_auto_update", False):
+        return
+    force = bool(getattr(args, "force_update", False))
+    with contextlib.suppress(Exception):
+        maybe_update_prompts(force=force, timeout=3.0)
+    if args.command == "mcp":
+        thread = threading.Thread(
+            target=maybe_auto_update,
+            kwargs={"force": force, "allow_upgrade": True},
+            daemon=True,
+        )
+        thread.start()
+        return
+    with contextlib.suppress(Exception):
+        maybe_auto_update(force=force, allow_upgrade=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(_normalize_argv(sys.argv[1:] if argv is None else argv))
     try:
+        if args.command not in {"update", "settings"}:
+            _run_auto_update(args)
         if args.command == "connect":
             return _run_connect(args)
         if args.command == "disconnect":
@@ -559,6 +617,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_export(args)
         if args.command == "update":
             return _run_update(args)
+        if args.command == "settings":
+            return _run_settings(args)
     except ValueError as exc:
         print(f"idh: {exc}", file=sys.stderr)
         return 2

@@ -11,6 +11,7 @@ from typing import Any, TextIO
 from . import __version__
 from .http_mcp import MCPHTTPClient, MCPTransportError, probe_endpoint
 from .models import AppEndpoint
+from .prompts import PromptStore
 
 EndpointProvider = Callable[[], list[AppEndpoint]]
 
@@ -338,6 +339,31 @@ GATEWAY_TOOLS = [
         },
         "annotations": {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True},
     },
+    {
+        "name": "idh_list_skills",
+        "description": (
+            "List the currently available reverse-engineering skills from the idh prompt registry. "
+            "Skills are refreshed independently of the idh package; call idh_get_skill to read one."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True},
+    },
+    {
+        "name": "idh_get_skill",
+        "description": (
+            "Read the full markdown content of a skill returned by idh_list_skills. "
+            "Use the skill name exactly as returned."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "skill name from idh_list_skills"},
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True},
+    },
 ]
 
 
@@ -345,6 +371,7 @@ class GatewayServer:
     def __init__(self, endpoints: EndpointProvider) -> None:
         self._endpoints = endpoints
         self._clients: dict[str, MCPHTTPClient] = {}
+        self._prompts = PromptStore()
         self._next_id = 1
         self._lock = threading.Lock()
 
@@ -368,35 +395,7 @@ class GatewayServer:
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": False}},
                     "serverInfo": {"name": "idh", "version": __version__},
-                    "instructions": (
-                        "AI Agent protocol — tool names, params, and response fields are discoverable "
-                        "only via idh_list_tools / idh_get_tool_schema; never assume or invent them."
-                        " (1) Target: to analyze an app, first call idh_list_devices; use the target_id "
-                        "whose name/bundle field matches the user's app. Single match → use it this round; "
-                        "ambiguous/none → ask; nothing online → tell the user to launch and inject, then re-list. "
-                        "Never reuse historical target_ids."
-                        " (2) Evidence: get_stats for overview; query_events/get_event for detail; "
-                        "disassemble/analyze_function/read_memory only as needed. Cite every fact with its source "
-                        "tool and event id; anything you cannot cite is inference, not fact."
-                        " (3) Address quality: for stack/branch addresses, when returned, inspect "
-                        "symbolicate.symbol_source/confidence. Use function_start or "
-                        "disassemble_function.resolved_start; never infer a function entry only from prologue "
-                        "bytes. Treat dladdr_nearest/low as a hint, not a label."
-                        " (4) Coverage: xref/string/selector/function scans are paged. When scan metadata is "
-                        "returned and scan.coverage_complete is false, follow scan.next_scan_offset while "
-                        "scan.has_more before claiming no match exists."
-                        " For export_events, keep cursor.snapshot_until_seq fixed and follow "
-                        "cursor.next_after_seq until cursor.has_more is false."
-                        " (5) Causality: correlate_request proves only same-window co-occurrence. Claim a causal "
-                        "chain only when verified by shared stack frames, same thread id, or a disassembled call path; "
-                        'otherwise label it "same-window, unverified".'
-                        " (6) Layers: separate facts (field values: algorithm, key, iv, input/output, stack) from "
-                        "inference (hex decoding, semantics, purpose, flow); label each and state how to verify."
-                        " (7) Side effects: read-only operations may run autonomously; state-changing ones "
-                        "(per schema description — e.g., set_capture, clear) require explicit user intent and "
-                        "allow_mutation=true."
-                        " (8) Failure: device offline → stop, report, ask the user; no retries, no silent re-targeting."
-                    ),
+                    "instructions": self._prompts.instructions(),
                 },
             )
         if method == "ping":
@@ -412,6 +411,24 @@ class GatewayServer:
 
     def _call_tool(self, name: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
+            if name == "idh_list_skills":
+                return _tool_result({"skills": self._prompts.list_skills()})
+            if name == "idh_get_skill":
+                skill_name = arguments.get("name")
+                if not isinstance(skill_name, str) or not skill_name:
+                    return _tool_error("missing skill name", code="skill_name_required")
+                content = self._prompts.get_skill(skill_name)
+                if content is None:
+                    return _tool_error(
+                        f"skill does not exist: {skill_name}",
+                        code="skill_not_found",
+                        details={
+                            "available_skills": [
+                                item["name"] for item in self._prompts.list_skills()
+                            ]
+                        },
+                    )
+                return _tool_result({"name": skill_name, "content": content})
             if name == "idh_list_devices":
                 return _tool_result(inventory(self._endpoints()))
             if name == "idh_get_panel_url":

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "updated_at": "2026-09-19T12:00:00Z",
+  "instructions": "instructions.md",
+  "skills": [
+    {
+      "name": "static-linked-crypto",
+      "title": "静态链接加密库逆向",
+      "description": "标准 crypto hook 全空时，用 capture_memory 在「指针 + 长度」导入处抓 key 的通用方法。",
+      "file": "skills/static-linked-crypto.md"
+    }
+  ]
+}

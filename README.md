@@ -214,13 +214,27 @@ uv run python -m build
 
 ## 自我更新
 
+`idh` 默认在每次启动时按节流策略检查 PyPI 并自动升级；提示词和 skills 从独立
+registry 热更新，不跟 CLI 版本绑定。
+
 ```bash
-idh update          # 检查并升级到 PyPI 最新版
-idh update --check-only   # 只检查，不升级
-idh update --yes    # 跳过确认直接升级
+idh update                 # 手动检查并升级到 PyPI 最新版
+idh update --check-only    # 只检查，不升级
+idh update --yes           # 跳过确认直接升级
+idh settings --json        # 查看自动更新/提示词配置
+idh settings --auto-update off
+idh settings --update-interval 3600
+idh --no-auto-update ...   # 本次运行禁用自动更新
+idh --force-update ...     # 本次运行强制检查
 ```
 
-通过 `sys.executable -m pip install --upgrade` 在安装环境内升级；失败时会提示用 `pipx upgrade ios-decrypt-hub`。
+自动升级会识别安装方式（`uv tool` / `pipx` / `pip`）并使用对应命令。
+MCP 网关暴露 `idh_list_skills` 和 `idh_get_skill`；提示词与 skills 的 registry
+地址由 `prompt_registry` 配置，默认从 `decrypthub/idh-cli` 的
+`prompts/index.json` 拉取，每 6 小时检查一次，可独立于 idh 发版更新。
+
+环境变量：`IDH_AUTO_UPDATE=0`、`IDH_UPDATE_INTERVAL=...`、
+`IDH_PROMPT_INTERVAL=...`、`IDH_PROMPT_REGISTRY=...`。
 
 ## 协议
 

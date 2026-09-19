@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ios-decrypt-hub"
-version = "0.6.0"
+version = "0.7.0"
 description = "Connect to IOSDecryptHub devices and bridge HTTP MCP to stdio"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -42,6 +42,9 @@ license-files = ["LICENSE"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+idh = ["prompts/*.json", "prompts/*.md", "prompts/skills/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

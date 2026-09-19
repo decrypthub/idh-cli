@@ -1,30 +1,24 @@
-"""idh update command tests (mocked network and pip)."""
+"""idh update/settings command tests (mocked PyPI)."""
 
-import json
-from unittest import mock
-
+from idh import __version__, selfupdate
 from idh.cli import main
 
 
 def test_update_check_only_reports_latest(monkeypatch, capsys) -> None:
-    payload = json.dumps({"info": {"version": "9.9.9"}}).encode()
-
-    def fake_urlopen(url, timeout):
-        return mock.Mock(__enter__=lambda self: self, __exit__=lambda *a: False, read=lambda: payload)
-
-    monkeypatch.setattr("idh.cli.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(selfupdate, "latest_pypi_version", lambda timeout=5.0: "9.9.9")
     assert main(["update", "--check-only"]) == 0
-    assert "9.9.9" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "9.9.9" in output
+    assert "install method" in output
 
 
 def test_update_skips_when_latest(monkeypatch, capsys) -> None:
-    from idh import __version__
-
-    payload = json.dumps({"info": {"version": __version__}}).encode()
-
-    def fake_urlopen(url, timeout):
-        return mock.Mock(__enter__=lambda self: self, __exit__=lambda *a: False, read=lambda: payload)
-
-    monkeypatch.setattr("idh.cli.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr(selfupdate, "latest_pypi_version", lambda timeout=5.0: __version__)
     assert main(["update", "--check-only"]) == 0
     assert "already up to date" in capsys.readouterr().out
+
+
+def test_settings_command_updates_auto_update(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("IDH_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    assert main(["settings", "--auto-update", "off", "--json"]) == 0
+    assert '"auto_update": false' in capsys.readouterr().out
