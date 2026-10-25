@@ -250,3 +250,9 @@ MCP 网关暴露 `idh_list_skills` 和 `idh_get_skill`；提示词与 skills 的
 
 - Telegram：https://t.me/decrypthubteam
 - X：https://x.com/decrypthub_
+
+## DecryptHub 桌面插件
+
+在 DecryptHub 的「插件」入口安装官方网关，配置设备服务地址后即可启用 MCP。安装包只包含电脑端 CLI 和标准库启动器，要求 Python 3.10+；设备插件及 Host 服务仍按各自项目说明准备。
+
+维护者构建组件：`python scripts/build_component.py`。输出 `dist/idh-<version>-any.zip`，包含 API 1 清单、源代码版本及逐文件 SHA-256，可独立通过 GitHub Releases 更新。`decrypthub-v<version>` 标签用于桌面组件分发，与 PyPI 发版独立。
