@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 
 import pytest
@@ -18,7 +19,9 @@ def test_saved_endpoints_round_trip_and_deduplicate(tmp_path) -> None:
         "http://192.168.100.65:8088/api/mcp"
     ]
     assert json.loads(path.read_text())["version"] == 1
-    assert path.stat().st_mode & 0o777 == 0o600
+    # Windows does not represent POSIX permission bits; its user ACL is separate.
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
 
 
 def test_remove_and_clear_saved_endpoints(tmp_path) -> None:

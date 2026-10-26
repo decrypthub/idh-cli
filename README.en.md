@@ -248,3 +248,9 @@ Search **DecryptHub** in WeChat, or scan the QR below.
 
 - Telegram: https://t.me/decrypthubteam
 - X: https://x.com/decrypthub_
+
+## DecryptHub desktop plugin
+
+Install the official gateway from DecryptHub → Plugins, then configure your device service address. The component contains the PC CLI and a standard-library launcher and requires Python 3.10+. Device plugins and Host services are deployed separately.
+
+Maintainers: run `python scripts/build_component.py` to build `dist/idh-<version>-any.zip`, including an API 1 manifest, source revision and per-file SHA-256 checksums. GitHub Releases tags `decrypthub-v<version>` distribute desktop components independently of PyPI releases.

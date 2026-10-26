@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from idh.settings import load_settings, save_settings
 
 
@@ -13,7 +15,9 @@ def test_settings_defaults_and_round_trip(tmp_path) -> None:
     loaded = load_settings(path)
     assert loaded["auto_update"] is False
     assert loaded["update_interval"] == 60
-    assert path.stat().st_mode & 0o777 == 0o600
+    # Windows does not represent POSIX permission bits; its user ACL is separate.
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
 
 
 def test_settings_env_override(monkeypatch, tmp_path) -> None:
