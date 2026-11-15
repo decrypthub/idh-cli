@@ -96,7 +96,8 @@ def probe_endpoint(endpoint: AppEndpoint, *, timeout: float = 1.0) -> AppEndpoin
         return endpoint.with_properties({"status": "unreachable"})
 
     process = stats.get("process") if isinstance(stats, dict) else None
-    process = process if isinstance(process, dict) else {}
+    if not isinstance(process, dict) or not process.get("pid"):
+        return endpoint.with_properties({"status": "unreachable", "error": "invalid_stats"})
     values = {
         "status": "online",
         "app_name": process.get("appName") or process.get("processName"),

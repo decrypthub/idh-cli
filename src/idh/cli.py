@@ -38,6 +38,7 @@ from .selfupdate import (
     run_upgrade,
 )
 from .settings import load_settings, update_settings
+from .status import status
 
 PROBE_TIMEOUT = 3.0
 
@@ -120,6 +121,16 @@ def build_parser() -> argparse.ArgumentParser:
     devices = subparsers.add_parser("devices", help="list saved devices and --endpoint targets")
     devices.add_argument("--json", action="store_true", help="output JSON")
     _add_endpoint_options(devices)
+
+    inventory_parser = subparsers.add_parser("status", help="read-only connection and live App facts for desktop Agents")
+    inventory_parser.add_argument("--json", action="store_true")
+    inventory_parser.add_argument("--timeout", type=float, default=PROBE_TIMEOUT)
+    _add_endpoint_options(inventory_parser)
+
+    tools = subparsers.add_parser("tools", help="read the selected App's real MCP tools and argument schemas")
+    tools.add_argument("--target", help="current target_id returned by status or devices")
+    tools.add_argument("--json", action="store_true")
+    _add_endpoint_options(tools)
 
     mcp = subparsers.add_parser("mcp", help="start the stdio MCP gateway")
     mcp.add_argument("--target", help="transparent proxy to one app; omit for the aggregate gateway")
@@ -270,6 +281,30 @@ def _run_devices(args: argparse.Namespace) -> int:
     else:
         _print_inventory(data)
     return 0
+
+
+def _run_status(args: argparse.Namespace) -> int:
+    endpoints = _manual_endpoints(args.endpoint, include_saved=not args.no_saved)
+    print(json.dumps(status(endpoints, timeout=args.timeout), ensure_ascii=False, indent=2))
+    return 0
+
+
+def _run_tools(args: argparse.Namespace) -> int:
+    endpoints = _manual_endpoints(args.endpoint, include_saved=not args.no_saved)
+    try:
+        endpoint = _resolve_device(endpoints, args.target, command="tools")
+        client = MCPHTTPClient(endpoint, timeout=10.0)
+        client.ensure_initialized()
+        response = client.send({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+        result = response.get("result") if isinstance(response, dict) and "error" not in response else None
+        if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
+            print("idh: invalid tools/list response", file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    except (SystemExit, MCPTransportError) as exc:
+        print(f"idh: {exc}", file=sys.stderr)
+        return 1
 
 
 def _run_mcp(args: argparse.Namespace) -> int:
@@ -601,7 +636,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(_normalize_argv(sys.argv[1:] if argv is None else argv))
     try:
-        if args.command not in {"update", "settings"}:
+        if args.command not in {"update", "settings", "status", "tools"} and not getattr(args, "json", False):
             _run_auto_update(args)
         if args.command == "connect":
             return _run_connect(args)
@@ -609,6 +644,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_disconnect(args)
         if args.command == "devices":
             return _run_devices(args)
+        if args.command == "status":
+            return _run_status(args)
+        if args.command == "tools":
+            return _run_tools(args)
         if args.command == "mcp":
             return _run_mcp(args)
         if args.command == "call":

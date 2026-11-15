@@ -254,3 +254,14 @@ Search **DecryptHub** in WeChat, or scan the QR below.
 Install the official gateway from DecryptHub → Plugins, then configure your device service address. The component contains the PC CLI and a standard-library launcher and requires Python 3.10+. Device plugins and Host services are deployed separately.
 
 Maintainers: run `python scripts/build_component.py` to build `dist/idh-<version>-any.zip`, including an API 1 manifest, source revision and per-file SHA-256 checksums. GitHub Releases tags `decrypthub-v<version>` distribute desktop components independently of PyPI releases.
+
+## Desktop Agent status and discovery
+
+```bash
+idh status --json --endpoint http://127.0.0.1:8088
+idh tools --json --endpoint http://127.0.0.1:8088
+```
+
+`status --json` returns a read-only snapshot with `schemaVersion: 1`, `checkedAt`, service observations in `connections`, and current app/PID identifiers in `targets`. An offline address is never reported as an online target. Status does not save connections, inject, restart apps, or upgrade the CLI. `tools --json` reads the real MCP tool descriptions and argument schemas. Refresh status, select a unique returned target, then use `call` or the persistent MCP connection; ask the user when multiple targets match.
+
+Use `--target <target_id>` to select the IDH app for tool discovery. Existing `--devices`, `devices`, `call`, `export`, and MCP commands remain supported.

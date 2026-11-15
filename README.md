@@ -256,3 +256,14 @@ MCP 网关暴露 `idh_list_skills` 和 `idh_get_skill`；提示词与 skills 的
 在 DecryptHub 的「插件」入口安装官方网关，配置设备服务地址后即可启用 MCP。安装包只包含电脑端 CLI 和标准库启动器，要求 Python 3.10+；设备插件及 Host 服务仍按各自项目说明准备。
 
 维护者构建组件：`python scripts/build_component.py`。输出 `dist/idh-<version>-any.zip`，包含 API 1 清单、源代码版本及逐文件 SHA-256，可独立通过 GitHub Releases 更新。`decrypthub-v<version>` 标签用于桌面组件分发，与 PyPI 发版独立。
+
+## 桌面 Agent 与状态查询
+
+```bash
+idh status --json --endpoint http://127.0.0.1:8088
+idh tools --json --endpoint http://127.0.0.1:8088
+```
+
+`status --json` 返回带 `schemaVersion: 1` 和 `checkedAt` 的只读快照，分别列出 `connections` 的服务在线事实及 `targets` 的应用/PID/目标标识；离线地址不会冒充在线目标。状态查询不保存地址、不注入、不启停应用，也不自动升级 CLI。`tools --json` 返回当前目标的真实 MCP 工具说明和参数 schema。先查询状态，再选择本次返回的唯一目标，最后通过现有 `call` 或持久 MCP 连接执行分析；多个候选必须让用户选择。
+
+IDH 可用 `--target <target_id>` 选择工具发现的目标；原有 `--devices`、`devices`、`call`、`export` 和 MCP 命令继续支持。
