@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
 
 from . import __version__
 from .models import AppEndpoint
@@ -13,12 +13,21 @@ class MCPTransportError(RuntimeError):
     pass
 
 
+class _NoRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class MCPHTTPClient:
-    def __init__(self, endpoint: AppEndpoint, *, timeout: float = 15.0) -> None:
+    def __init__(
+        self, endpoint: AppEndpoint, *, timeout: float = 15.0, bearer_token: str | None = None
+    ) -> None:
         self.endpoint = endpoint
         self.timeout = timeout
         self.session_id: str | None = None
         self.initialized = False
+        self._bearer_token = bearer_token
+        self._open = build_opener(ProxyHandler({}), _NoRedirects()).open if bearer_token else urlopen
 
     def update_endpoint(self, endpoint: AppEndpoint) -> None:
         if endpoint.mcp_url != self.endpoint.mcp_url:
@@ -61,9 +70,11 @@ class MCPHTTPClient:
         }
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
+        if self._bearer_token:
+            headers["Authorization"] = f"Bearer {self._bearer_token}"
         request = Request(self.endpoint.mcp_url, data=body, headers=headers, method="POST")
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with self._open(request, timeout=self.timeout) as response:
                 session_id = response.headers.get("Mcp-Session-Id")
                 if session_id:
                     self.session_id = session_id
@@ -72,7 +83,7 @@ class MCPHTTPClient:
                     return None
                 return json.loads(payload)
         except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
+            detail = "" if self._bearer_token else exc.read().decode("utf-8", errors="replace")
             raise MCPTransportError(
                 f"MCP HTTP {exc.code} ({self.endpoint.mcp_url}): {detail or exc.reason}"
             ) from exc

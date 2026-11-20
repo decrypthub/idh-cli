@@ -134,6 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp = subparsers.add_parser("mcp", help="start the stdio MCP gateway")
     mcp.add_argument("--target", help="transparent proxy to one app; omit for the aggregate gateway")
+    mcp.add_argument("--device-session", action="store_true", help="connect to the paired device session service over a loopback forward")
     _add_endpoint_options(mcp)
 
     call = subparsers.add_parser("call", help="call an MCP tool on a device (defaults to the only online device)")
@@ -308,6 +309,8 @@ def _run_tools(args: argparse.Namespace) -> int:
 
 
 def _run_mcp(args: argparse.Namespace) -> int:
+    if args.device_session:
+        return _run_device_session_mcp(args)
     endpoints = _manual_endpoints(args.endpoint, include_saved=not args.no_saved)
     if not endpoints:
         print(
@@ -326,6 +329,47 @@ def _run_mcp(args: argparse.Namespace) -> int:
         else:
             handler = GatewayServer(lambda: endpoints).handle
     serve_stdio(handler)
+    return 0
+
+
+def _run_device_session_mcp(args: argparse.Namespace) -> int:
+    if args.target or len(args.endpoint) != 1:
+        print("idh: --device-session requires exactly one loopback --endpoint", file=sys.stderr)
+        return 2
+    try:
+        endpoint = AppEndpoint.from_url(args.endpoint[0])
+    except ValueError:
+        print("idh: invalid device-session endpoint", file=sys.stderr)
+        return 2
+    if endpoint.primary_address != "127.0.0.1" or endpoint.mcp_url != endpoint.base_url + "/api/mcp":
+        print("idh: use a 127.0.0.1 forward to the device session service", file=sys.stderr)
+        return 2
+    token = os.environ.get("IDH_DEVICE_SESSION_TOKEN", "").strip()
+    if not token or not token.isascii() or any(character.isspace() for character in token):
+        print("idh: set IDH_DEVICE_SESSION_TOKEN to the Manager's read-only pairing credential", file=sys.stderr)
+        return 2
+    client = MCPHTTPClient(endpoint, bearer_token=token)
+    read_tools = {"list_sessions", "get_session", "read_session_events"}
+
+    def handle(message):
+        method = message.get("method") if isinstance(message, dict) else None
+        identity = message.get("id") if isinstance(message, dict) else None
+        params = message.get("params") if isinstance(message, dict) else None
+        name = params.get("name") if isinstance(params, dict) else None
+        try:
+            if method == "tools/call" and (not isinstance(name, str) or name not in read_tools):
+                raise MCPTransportError("device sessions expose three read-only tools")
+            reply = client.send(message)
+            if method == "initialize" and isinstance(reply, dict) and "error" not in reply:
+                if reply.get("result", {}).get("serverInfo", {}).get("name") != "idhjd":
+                    raise MCPTransportError("expected the paired device session service")
+            return reply
+        except MCPTransportError as error:
+            if identity is None:
+                return None
+            return {"jsonrpc": "2.0", "id": identity, "error": {"code": -32000, "message": str(error)}}
+
+    serve_stdio(handle)
     return 0
 
 

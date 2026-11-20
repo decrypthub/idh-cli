@@ -204,6 +204,19 @@ idh mcp --target 1 --endpoint http://127.0.0.1:8088
 
 Logs go to stderr. stdout is reserved for line-delimited JSON-RPC stdio messages.
 
+## On-device jailbreak sessions
+
+Enable sessions in IOSDecryptHub Manager and copy its read-only credential.
+Forward the device service to 127.0.0.1, set the credential in the
+IDH_DEVICE_SESSION_TOKEN environment variable, and start the stdio gateway:
+
+~~~sh
+idh mcp --device-session --endpoint http://127.0.0.1:8088
+~~~
+
+The gateway can read retained session summaries after the app exits. Pair again
+and refresh the credential after a service restart.
+
 ## Connection status
 
 - `devices` / `connect` probe every saved connection via `/api/stats`. Offline devices

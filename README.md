@@ -194,6 +194,16 @@ idh mcp --target 1 --endpoint http://127.0.0.1:8088
 
 所有日志写入 stderr，stdout 严格保留给逐行 JSON-RPC stdio 消息。
 
+### 越狱版设备会话
+
+在 IOSDecryptHub Manager 中启用设备会话模式并复制只读凭证。通过已授权的调试通道把设备的 `127.0.0.1:8088` 转发到 PC 本机，将凭证设置为 `IDH_DEVICE_SESSION_TOKEN` 环境变量后启动网关。
+
+```bash
+idh mcp --device-session --endpoint http://127.0.0.1:8088
+```
+
+此入口直接读取设备会话。目标 App 退出后，`list_sessions`、`get_session` 和 `read_session_events` 仍可查询已经保存的摘要。服务重启或重新配对后，更新客户端使用的凭证。
+
 ## 连接状态
 
 - `devices` / `connect` 每次都会用 `/api/stats` 探测所有已保存连接，离线设备显示
