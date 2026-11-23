@@ -56,9 +56,11 @@ def load_saved_endpoints(path: Path | None = None) -> list[AppEndpoint]:
             kind = item.get("kind")
             if kind is not None and kind not in _KINDS:
                 raise ValueError(f"connection config has an unknown kind: {target}")
-            loaded.append(
-                AppEndpoint.from_url(url).with_kind(kind if isinstance(kind, str) else None)
-            )
+            endpoint = AppEndpoint.from_url(url).with_kind(kind if isinstance(kind, str) else None)
+            token = item.get("session_token")
+            if isinstance(token, str) and token:
+                endpoint = endpoint.with_properties({"session_token": token})
+            loaded.append(endpoint)
         return loaded
     except ValueError as exc:
         if str(exc).startswith("connection config"):
@@ -111,19 +113,68 @@ def clear_endpoints(path: Path | None = None) -> int:
     return len(existing)
 
 
-def _write_endpoints(endpoints: Iterable[AppEndpoint], target: Path) -> None:
+def load_selected(path: Path | None = None) -> str | None:
+    target = path or config_path()
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    selected = data.get("selected") if isinstance(data, dict) else None
+    return selected if isinstance(selected, str) and selected else None
+
+
+def save_selected(value: str, path: Path | None = None) -> None:
+    target = path or config_path()
+    _write_endpoints(load_saved_endpoints(target), target, selected=value)
+
+
+def save_endpoint_token(value: str, token: str, path: Path | None = None) -> bool:
+    target = path or config_path()
+    canonical = AppEndpoint.from_url(value).mcp_url.casefold()
+    endpoints = load_saved_endpoints(target)
+    updated = False
+    items: list[AppEndpoint] = []
+    for item in endpoints:
+        if item.mcp_url.casefold() == canonical:
+            item = item.with_properties({"session_token": token})
+            updated = True
+        items.append(item)
+    if not updated:
+        return False
+    _write_endpoints(items, target)
+    return True
+
+
+def _write_endpoints(
+    endpoints: Iterable[AppEndpoint], target: Path, *, selected: str | None = None
+) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
+    if selected is None and target.exists():
+        # 其它写路径不改当前选中，读旧文件保留
+        try:
+            data = json.loads(target.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("selected"), str):
+                selected = data["selected"]
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            pass
     items = sorted(endpoints, key=lambda item: item.mcp_url.casefold())
-    if any(item.kind for item in items):
-        payload = {
+    if any(item.kind or item.properties.get("session_token") for item in items):
+        payload: dict[str, object] = {
             "version": CONFIG_VERSION_KIND,
             "endpoints": [
-                {"url": item.mcp_url, **({"kind": item.kind} if item.kind else {})}
+                {
+                    "url": item.mcp_url,
+                    **({"kind": item.kind} if item.kind else {}),
+                    **({"session_token": item.properties["session_token"]}
+                       if item.properties.get("session_token") else {}),
+                }
                 for item in items
             ],
         }
     else:
         payload = {"version": CONFIG_VERSION, "endpoints": [item.mcp_url for item in items]}
+    if selected:
+        payload["selected"] = selected
     fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent, text=True)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

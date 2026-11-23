@@ -256,6 +256,8 @@
     const {pathname, searchParams} = new URL(url, location.origin);
     const selection = Number(searchParams.get("cat") ?? -1);
     const method = options.method || "GET";
+    // 设备管理与注入范围：由本机面板服务直接处理/中转，不走会话适配
+    if (/^\/api\/(apps|injection-scope|devices)(\/|$)/.test(pathname)) return realFetch(url, options);
     try {
       if (method === "GET" && pathname === "/api/settings/export") return await deviceSettings();
       if (method === "POST" && pathname === "/api/settings/import") return await deviceSettings(options.body);

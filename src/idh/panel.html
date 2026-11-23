@@ -86,6 +86,10 @@
   .dropdown-item[aria-checked=true],.dropdown-item[aria-selected=true] { background:var(--active); color:var(--blue) }
   .dropdown-item span:first-child { min-width:0; overflow-wrap:anywhere }
   .dropdown-sub { display:block; color:var(--muted); font-size:11px; margin-top:2px }
+  .device-add { display:flex; gap:6px; padding:4px 9px 9px }
+  .device-add input { flex:1; min-width:0; font:inherit; font-size:12px; padding:5px 8px; border:1px solid var(--line); border-radius:5px; background:var(--bg); color:var(--ink) }
+  .device-remove { color:var(--muted); padding:2px 7px; border-radius:4px; cursor:pointer }
+  .device-remove:hover { background:var(--surface-3); color:var(--ink) }
   .dropdown-divider { height:1px; background:var(--line); margin:5px 6px }
   .proc-details { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 12px; margin:0; padding:4px 10px 10px; font-size:11.5px }
   .proc-details dt { color:var(--muted) }
@@ -303,6 +307,12 @@
           <svg class='ico sm' aria-hidden='true'><use href='#i-chevron'/></svg>
         </button>
         <div class='dropdown right session-dropdown' id='processPopover' hidden>
+          <div class='dropdown-head'>设备</div>
+          <div id='idh-devices' role='listbox' aria-label='设备'></div>
+          <div class='device-add'>
+            <input id='deviceAddr' type='text' placeholder='设备地址 127.0.0.1:8088' autocomplete='off' spellcheck='false'/>
+            <button class='btn sm' id='deviceAddBtn' type='button'>添加</button>
+          </div>
           <div class='dropdown-head'>切换设备会话</div>
           <div id='idh-session' role='listbox' aria-label='切换设备会话'></div>
           <div class='dropdown-divider'></div>
@@ -389,6 +399,16 @@
         <section class='tool-surface'><h3>产物</h3><div class='tool-content'><p class='tool-note'>设备未提供产物清单，此处不显示会话摘要。</p></div></section>
       </div>
     </main>
+    <main class='tool-page' id='injectWorkspace' hidden aria-labelledby='injectHeading'>
+      <div class='tool-header'><div><h2 id='injectHeading'>注入范围</h2></div>
+        <div class='hstack'><input id='injectQ' class='search-input' type='search' placeholder='搜索应用 / Bundle ID' spellcheck='false'/>
+        <button class='btn sm' id='injectRefresh' type='button'>刷新</button></div></div>
+      <div class='notice' id='injectError' role='status' hidden></div>
+      <section class='tool-surface'><table class='tool-table' aria-label='应用注入范围'>
+        <thead><tr><th style='width:34%'>应用</th><th>Bundle ID</th><th style='width:76px'>状态</th><th style='width:150px'>注入</th></tr></thead>
+        <tbody id='injectRows'></tbody>
+      </table></section>
+    </main>
   </div>
 </div>
 <dialog class='diagnostic-dialog' id='diagMask' aria-labelledby='diagHeading'>
@@ -465,7 +485,8 @@
     ["crypto","加解密","code",[0,1,2,3]], ["sys","系统","box",[4,5]],
     ["net","网络","terminal",[6]], ["keychain","Keychain","info",[7]],
     ["other","其他","list",[8]], ["files","文件","box",null],
-    ["symbols","符号","code",null], ["dump","Dump","download",null]
+    ["symbols","符号","code",null], ["dump","Dump","download",null],
+    ["inject","注入","play",null]
   ];
   const fields = [
     ["maxRecords","单会话摘要条数","条",1,2000,1,"setMaxEntries"],
@@ -740,7 +761,8 @@
     $("toolbar").hidden=!eventTab;
     $("workarea").hidden=!eventTab;
     $("toolWorkspace").hidden=eventTab;
-    for(const [tab,id] of Object.entries({files:"fileWorkspace",symbols:"symbolWorkspace",dump:"dumpWorkspace"})) $(id).hidden=state.tab!==tab;
+    for(const [tab,id] of Object.entries({files:"fileWorkspace",symbols:"symbolWorkspace",dump:"dumpWorkspace",inject:"injectWorkspace"})) $(id).hidden=state.tab!==tab;
+    if(state.tab==="inject") loadInject();
     if(!eventTab) {
       resetByteOwner();
       currentFiltered=[];shownRows=[];
@@ -1241,6 +1263,84 @@
       if(sheet!==working)return;
       working.busy=false;updateSave(false);feedback("保存失败："+error.message,"error");
     }
+  });
+
+  // ---- 设备管理 + 注入范围 ----
+  const post=(body)=>fetch("/api/devices",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then((r)=>r.json());
+  let deviceRows=[];
+  function renderDevices() {
+    $("idh-devices").innerHTML=deviceRows.length?deviceRows.map((d)=>{
+      const sub=(d.online?"在线":"离线")+(d.paired?"":" · 未配对");
+      return '<button class="dropdown-item" type="button" role="option" aria-selected="'+d.selected+'" data-device="'+esc(d.id)+'"><span><strong>'+esc(d.address)+'</strong><span class="dropdown-sub">'+sub+'</span></span>'+(d.selected?icon("check",true):"")+'<span class="device-remove" role="button" tabindex="-1" title="移除" data-remove="'+esc(d.id)+'">×</span></button>';
+    }).join(""):'<p class="dropdown-head">没有已保存的设备</p>';
+  }
+  async function loadDevices() {
+    try{const data=await (await fetch("/api/devices")).json();deviceRows=data.devices||[];}catch{deviceRows=[];}
+    renderDevices();
+  }
+  $("processBtn").addEventListener("click",loadDevices);
+  $("idh-devices").addEventListener("click",async(event)=>{
+    const remove=event.target.closest("[data-remove]");
+    if(remove){event.stopPropagation();await post({action:"remove",id:remove.dataset.remove});loadDevices();return;}
+    const row=event.target.closest("[data-device]");
+    if(row && !row.getAttribute("aria-selected").includes("true")){
+      const data=await post({action:"select",id:row.dataset.device});
+      if(data.error){loadDevices();return;}
+      location.reload();
+    }
+  });
+  $("deviceAddBtn").addEventListener("click",async()=>{
+    const address=$("deviceAddr").value.trim();
+    if(!address)return;
+    const data=await post({action:"add",address});
+    $("deviceAddr").value=data.error?"":"";
+    loadDevices();
+  });
+  $("deviceAddr").addEventListener("keydown",(event)=>{if(event.key==="Enter")$("deviceAddBtn").click();});
+
+  let injectData=null, injectAt=0, injectPending=new Set();
+  function injectRow(app,scope) {
+    const inScope=scope.includes(app.bundleId), sys=app.kind==="system"||app.bundleId.startsWith("com.apple.");
+    const pending=injectPending.has(app.bundleId);
+    return '<tr><td><strong>'+esc(app.name)+'</strong>'+(app.running?' <span class="pill">运行中</span>':"")+(pending?' <span class="pill">待重启</span>':"")+'</td>'+
+      '<td class="mono">'+esc(app.bundleId)+'</td><td>'+esc(app.kind==="user"?"已装":app.kind==="jb"?"越狱":"系统")+'</td><td>'+
+      (sys?'<span class="tool-note">不可注入</span>':
+      '<label class="hstack"><input type="checkbox" data-inject="'+esc(app.bundleId)+'"'+(inScope?" checked":"")+(pending?" disabled":"")+'/><span>'+(inScope?"已注入":"未注入")+'</span></label>'+
+      (pending?' <button class="btn sm" type="button" data-relaunch="'+esc(app.bundleId)+'">重启并应用</button>':""))+'</td></tr>';
+  }
+  function renderInject() {
+    if(!injectData){$("injectRows").innerHTML='<tr><td colspan="4" class="tool-note">正在读取…</td></tr>';return;}
+    if(injectData.error){$("injectError").hidden=false;$("injectError").textContent="注入范围读取失败："+injectData.error;$("injectRows").innerHTML="";return;}
+    $("injectError").hidden=true;
+    const q=($("injectQ").value||"").trim().toLowerCase(), scope=injectData.scope||[];
+    const apps=(injectData.apps||[]).filter((a)=>!q||(a.name+" "+a.bundleId).toLowerCase().includes(q));
+    $("injectRows").innerHTML=apps.length?apps.map((a)=>injectRow(a,scope)).join(""):'<tr><td colspan="4" class="tool-note">没有匹配的应用</td></tr>';
+  }
+  async function loadInject(force) {
+    if(!force && Date.now()-injectAt<3000)return;
+    injectAt=Date.now();
+    try{injectData=await (await fetch("/api/apps")).json();}catch{injectData={error:"device_unavailable"};}
+    renderInject();
+  }
+  $("injectRefresh").addEventListener("click",()=>loadInject(true));
+  $("injectQ").addEventListener("input",renderInject);
+  $("injectRows").addEventListener("change",async(event)=>{
+    const box=event.target.closest("[data-inject]");if(!box)return;
+    box.disabled=true;
+    const id=box.dataset.inject, action=box.checked?"add":"remove";
+    const data=await (await fetch("/api/injection-scope",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({[action]:[id]})})).json();
+    if(data.error){box.disabled=false;box.checked=!box.checked;return;}
+    const app=(injectData?.apps||[]).find((a)=>a.bundleId===id);
+    if(app&&app.running)injectPending.add(id);
+    injectData.scope=data.scope||injectData.scope;
+    renderInject();
+  });
+  $("injectRows").addEventListener("click",async(event)=>{
+    const btn=event.target.closest("[data-relaunch]");if(!btn)return;
+    btn.disabled=true;
+    await fetch("/api/apps/relaunch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bundleId:btn.dataset.relaunch})});
+    injectPending.delete(btn.dataset.relaunch);
+    setTimeout(()=>loadInject(true),1500);
   });
 
   buildTabs();setWidth(view.width);setMenu("");render(true);pageReady=true;
