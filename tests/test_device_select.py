@@ -213,7 +213,7 @@ def test_panel_reads_history_independently_of_online_apps(
     try:
         with urlopen(base + "/", timeout=3) as response:
             page = response.read().decode()
-            assert "id='idh-session'" in page and "id='tabbar'" in page
+            assert "id='appChoices'" in page and "id='tabbar'" in page
             assert "class='splitter'" in page and 'class="hdr-raven"' in page
         with urlopen(base + "/panel-device.js", timeout=3) as response:
             assert b"IDHDevicePanel" in response.read()

@@ -104,14 +104,17 @@
   }
 
   // 数据按 App 组织：会话按 bundleId 归并为一个应用条目。
-  // 条目保留 session 形状（sessionId=bundleId），复用现有下拉渲染。
-  function appsFrom(sessions) {
+  // 条目保留 session 形状（sessionId=bundleId），并从已安装清单并入名称与运行态。
+  function appsFrom(sessions, installed) {
+    const meta = new Map((installed || []).map((a) => [a.bundleId, a]));
     const map = new Map();
     for (const s of sessions) {
       let app = map.get(s.bundleId);
       if (!app) {
+        const m = meta.get(s.bundleId);
         app = {sessionId: s.bundleId, bundleId: s.bundleId, createdAtMs: s.createdAtMs,
-               status: s.status, count: 0, sessions: 0};
+               status: s.status, count: 0, sessions: 0,
+               name: m?.name || "", running: m?.running === true, kind: "record"};
         map.set(s.bundleId, app);
       }
       app.count += s.count;
@@ -124,23 +127,9 @@
     return [...map.values()];
   }
 
-  function selectOptions(sessions) {
-    const apps = appsFrom(sessions);
-    if (controls?.sessionOptions) {
-      controls.sessionOptions(apps, selected);
-      return;
-    }
-    const menu = document.getElementById("idh-session");
-    const options = apps.map((app) => [app.bundleId, [
-      app.bundleId, formatted(app.createdAtMs), stateLabels[app.status], app.count + " 条"
-    ].filter(Boolean).join(" · ")]);
-    if (!options.length) options.push(["", "没有可读取的应用记录"]);
-    if (JSON.stringify(options) !== menu.dataset.options) {
-      menu.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
-      menu.dataset.options = JSON.stringify(options);
-    }
-    menu.value = selected;
-    menu.disabled = !apps.length;
+  function selectOptions(sessions, installed) {
+    const apps = appsFrom(sessions, installed);
+    controls?.sessionOptions?.(apps, selected, installed || []);
   }
 
   function changeSelection(id) {
@@ -160,16 +149,18 @@
     if (catalogPending) return catalogPending;
     if (catalog && Date.now() - catalog.time < 1100) return catalog;
     catalogPending = (async () => {
-      const [health, history] = await Promise.all([realFetch("/health"), realFetch("/api/sessions")]);
+      const [health, history, installedRes] = await Promise.all([
+        realFetch("/health"), realFetch("/api/sessions"), realFetch("/api/apps")]);
       if (!health.ok) throw new Error("设备连接不可用");
       const device = await health.json();
       const sessions = history.ok ? (await history.json()).sessions : [];
+      const installed = installedRes.ok ? (await installedRes.json()).apps || [] : [];
       if (!sessions.some((session) => session.bundleId === selected)) changeSelection(sessions[0]?.bundleId || "");
-      selectOptions(sessions);
+      selectOptions(sessions, installed);
       const notice = document.getElementById("idh-session-notice");
       notice.textContent = history.ok ? "" : "设备在线，会话暂时无法读取。";
       notice.hidden = !notice.textContent;
-      catalog = {time: Date.now(), device, sessions};
+      catalog = {time: Date.now(), device, sessions, installed};
       return catalog;
     })();
     try {
@@ -359,7 +350,6 @@
 
   function attach(callbacks) {
     controls = callbacks;
-    document.getElementById("idh-session").addEventListener("change", (event) => changeSelection(event.target.value));
     document.getElementById("sizeWrap").style.setProperty("display", "none", "important");
     document.getElementById("q").placeholder = "搜索本类：序号 / 阶段 / 关联 ID…";
     document.getElementById("dlAll").addEventListener("click", (event) => {

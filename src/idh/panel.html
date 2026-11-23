@@ -91,6 +91,33 @@
   .device-remove { color:var(--muted); padding:2px 7px; border-radius:4px; cursor:pointer }
   .device-remove:hover { background:var(--surface-3); color:var(--ink) }
   .dropdown-divider { height:1px; background:var(--line); margin:5px 6px }
+  /* 设备/应用双控件：设备按钮带状态副标题 */
+  .device-btn { min-width:0 }
+  .device-info { display:grid; gap:1px; text-align:left; min-width:0; max-width:170px }
+  .device-info strong,.device-info small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .device-info small { color:var(--muted); font-size:10px }
+  /* 应用选择对话框：对齐 ADH 的 app picker —— 图标位+名称+包名+语义状态 */
+  .app-dialog { width:min(560px,94vw); height:min(600px,86dvh); display:flex; flex-direction:column }
+  .app-dialog-card { display:flex; align-items:center; gap:12px; padding:14px 16px 10px; border-bottom:1px solid var(--line-soft) }
+  .app-face { position:relative; width:40px; height:40px; flex:none }
+  .app-face .app-letter { width:40px; height:40px; border-radius:9px; display:grid; place-items:center; color:var(--ink); background:var(--surface-3); font-size:16px; font-weight:650 }
+  .app-dialog-id { min-width:0; flex:1; display:flex; flex-direction:column; gap:2px }
+  .app-dialog-id strong { font-size:15px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .app-dialog-id span { overflow:hidden; color:var(--muted); font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace; text-overflow:ellipsis; white-space:nowrap }
+  .app-search { margin:10px 16px 0 }
+  .app-choices { flex:1; min-height:0; overflow:auto; padding:8px 10px 10px }
+  .app-group { padding:8px 10px 3px; color:var(--muted); font-size:11px; font-weight:650 }
+  .app-item { display:flex; align-items:center; gap:10px; width:100%; min-height:52px; padding:7px 10px; color:var(--ink-2); background:transparent; border:0; border-radius:6px; text-align:left; cursor:pointer }
+  .app-item:hover,.app-item.active { background:var(--surface-3) }
+  .app-item .app-face { width:32px; height:32px }
+  .app-item .app-letter { width:32px; height:32px; border-radius:7px; font-size:13px }
+  .app-copy { display:flex; flex-direction:column; min-width:0; flex:1 }
+  .app-name { overflow:hidden; color:var(--ink); font-size:13px; font-weight:600; text-overflow:ellipsis; white-space:nowrap }
+  .app-pkg { overflow:hidden; color:var(--muted); font:10px/1.3 ui-monospace,SFMono-Regular,Consolas,monospace; text-overflow:ellipsis; white-space:nowrap }
+  .app-state { flex:none; color:var(--muted); font-size:10px }
+  .app-state.on { color:var(--green) }
+  .app-empty { padding:10px 12px; color:var(--muted); font-size:12px }
+  .app-dialog-foot { max-height:132px; overflow:auto; border-top:1px solid var(--line-soft) }
   .proc-details { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 12px; margin:0; padding:4px 10px 10px; font-size:11.5px }
   .proc-details dt { color:var(--muted) }
   .proc-details dd { margin:0; overflow-wrap:anywhere }
@@ -302,23 +329,24 @@
     </div>
     <div class='top-actions'>
       <div class='anchor'>
-        <button class='btn session-btn' id='processBtn' type='button' aria-controls='processPopover' aria-expanded='false' title='切换应用'>
-          <span class='session-info'><strong id='session-title'>应用记录</strong><small id='session-meta'>正在读取…</small></span>
+        <button class='btn device-btn' id='deviceBtn' type='button' aria-controls='deviceMenu' aria-expanded='false' title='切换设备'>
+          <span class='device-info'><strong id='deviceTitle'>设备</strong><small id='deviceLink'>读取中…</small></span>
           <svg class='ico sm' aria-hidden='true'><use href='#i-chevron'/></svg>
         </button>
-        <div class='dropdown right session-dropdown' id='processPopover' hidden>
+        <div class='dropdown right session-dropdown' id='deviceMenu' hidden>
           <div class='dropdown-head'>设备</div>
           <div id='idh-devices' role='listbox' aria-label='设备'></div>
           <div class='device-add'>
             <input id='deviceAddr' type='text' placeholder='设备地址 127.0.0.1:8088' autocomplete='off' spellcheck='false'/>
             <button class='btn sm' id='deviceAddBtn' type='button'>添加</button>
           </div>
-          <div class='dropdown-head'>切换应用</div>
-          <div id='idh-session' role='listbox' aria-label='切换应用'></div>
-          <div class='dropdown-divider'></div>
-          <div class='dropdown-head'>进程详情</div>
-          <dl class='proc-details' id='procinfo'></dl>
         </div>
+      </div>
+      <div class='anchor'>
+        <button class='btn session-btn' id='processBtn' type='button' aria-haspopup='dialog' aria-controls='appDialog' title='切换应用'>
+          <span class='session-info'><strong id='session-title'>应用记录</strong><small id='session-meta'>正在读取…</small></span>
+          <svg class='ico sm' aria-hidden='true'><use href='#i-chevron'/></svg>
+        </button>
       </div>
       <button class='btn' id='diagBtn' type='button' title='查看设备与会话诊断'><svg class='ico sm' aria-hidden='true'><use href='#i-info'/></svg>诊断</button>
       <button class='btn' id='mcpBtn' type='button'><svg class='ico sm' aria-hidden='true'><use href='#i-terminal'/></svg>MCP</button>
@@ -411,6 +439,20 @@
     </main>
   </div>
 </div>
+<dialog class='app-dialog' id='appDialog' aria-label='选择应用'>
+  <div class='app-dialog-card'>
+    <span class='app-face'><span class='app-letter' id='appFaceLetter'>?</span></span>
+    <div class='app-dialog-id'>
+      <strong id='appDialogName'>未选择</strong>
+      <span id='appDialogPkg'></span>
+      <span id='appDialogState'></span>
+    </div>
+    <button class='btn sm' id='appDialogClose' type='button' aria-label='关闭'>×</button>
+  </div>
+  <input class='app-search' id='appSearch' type='search' placeholder='搜索应用' aria-label='搜索应用' autocomplete='off'>
+  <div class='app-choices' id='appChoices' role='listbox' aria-label='应用'></div>
+  <div class='app-dialog-foot'><dl class='proc-details' id='procinfo'></dl></div>
+</dialog>
 <dialog class='diagnostic-dialog' id='diagMask' aria-labelledby='diagHeading'>
   <div class='dialog-head'>
     <div><h2 id='diagHeading'>设备诊断日志</h2><span class='helper'>当前设备与所选会话的状态快照</span></div>
@@ -531,7 +573,7 @@
   const highWater = () => state.session?.lastSeq ?? 0;
   let currentFiltered = [], shownRows = [], currentMenu = "";
   let requestSerial = 0, inFlight = false, pageReady = false;
-  let sessionOptionsKey = "";
+
   let sheet = null, toastTimer;
 
   function toast(text) {
@@ -565,7 +607,7 @@
     toast("已下载 "+filename);
   }
 
-  const menus = {processPopover:"processBtn",filterMenu:"filterToggleBtn",toolbarMenu:"toolbarMoreBtn"};
+  const menus = {deviceMenu:"deviceBtn",filterMenu:"filterToggleBtn",toolbarMenu:"toolbarMoreBtn"};
   function setMenu(id,focus=false) {
     const old=currentMenu;
     currentMenu=id;
@@ -586,35 +628,59 @@
   document.addEventListener("click",(e)=>{
     if(currentMenu && !e.target.closest("#"+currentMenu+",#"+menus[currentMenu])) setMenu("");
   });
-  function sessionOptions(sessions,selected) {
+  // 应用选择对话框：记录 App 在前，已安装无记录的 App 列在后（对齐 ADH 应用选择器）
+  let appCatalog = {apps:[], installed:[], selected:""};
+  function appRows(query) {
+    const q=(query||"").trim().toLowerCase();
+    const match=a=>!q||(a.bundleId+" "+(a.name||"")).toLowerCase().includes(q);
+    const face=a=>'<span class="app-face"><span class="app-letter">'+esc((a.name||a.bundleId||"?").slice(0,1).toUpperCase())+'</span></span>';
+    const stateOf=a=>a.kind==="record"
+      ? (a.running?"运行中":sessionStatus[a.status]||"会话")
+      : (a.running?"运行中":"");
+    const row=a=>'<button class="app-item'+(a.bundleId===appCatalog.selected?" active":"")+'" type="button" role="option" aria-selected="'+(a.bundleId===appCatalog.selected)+'" data-app="'+esc(a.bundleId)+'">'+face(a)+
+      '<span class="app-copy"><span class="app-name">'+esc(a.name||a.bundleId)+'</span><span class="app-pkg">'+esc(a.bundleId)+'</span></span>'+
+      '<span class="app-state'+(a.running||a.kind==="record"?" on":"")+'">'+esc(stateOf(a))+(a.count?' · '+a.count+' 条':"")+'</span></button>';
+    const recorded=appCatalog.apps.filter(match);
+    const recordedIds=new Set(recorded.map(a=>a.bundleId));
+    const installed=appCatalog.installed.filter(a=>!recordedIds.has(a.bundleId)&&match(a));
+    return (recorded.length?'<div class="app-group">记录</div>'+recorded.map(row).join(""):"")+
+      (installed.length?'<div class="app-group">已安装</div>'+installed.map(row).join(""):"")||
+      '<p class="app-empty">没有可读取的应用</p>';
+  }
+  function paintAppDialog() {
+    const info=appCatalog.apps.find((s)=>s.bundleId===appCatalog.selected);
+    const installedInfo=appCatalog.installed.find((a)=>a.bundleId===appCatalog.selected);
+    const name=info?.name||installedInfo?.name||appCatalog.selected;
+    $("appFaceLetter").textContent=(name||installedInfo?.name||appCatalog.selected||"?").slice(0,1).toUpperCase()||"?";
+    $("appDialogName").textContent=name||"未选择";
+    $("appDialogPkg").textContent=appCatalog.selected||"";
+    $("appDialogState").textContent=info
+      ? (info.running?"运行中":sessionStatus[info.status]||"会话")+" · "+info.count+" 条 · "+fmt(longTime,info.createdAtMs)
+      : appCatalog.selected?"没有此应用的记录":"";
+    const query=$("appSearch").value;
+    $("appChoices").innerHTML=appRows(query);
+  }
+  function sessionOptions(sessions,selected,installed) {
+    appCatalog={apps:sessions,installed:installed||[],selected};
     const info=sessions.find((s)=>s.sessionId===selected);
-    $("session-title").textContent=info?.bundleId || "应用记录";
+    $("session-title").textContent=info?.name||info?.bundleId || "应用记录";
     $("session-meta").textContent=info
       ? [sessionStatus[info.status] || "会话",fmt(longTime,info.createdAtMs),
          (info.sessions>1?info.sessions+" 个会话 · ":"")+info.count+" 条"].join(" · ")
       : "暂无可读取的应用记录";
-    const key=JSON.stringify(sessions.map((s)=>[s.sessionId,s.bundleId,s.status,s.count,s.createdAtMs]))+selected;
-    if(key===sessionOptionsKey) return;
-    sessionOptionsKey=key;
-    const focused=$("idh-session").contains(document.activeElement)?document.activeElement.dataset.session:"";
-    $("idh-session").innerHTML=sessions.length?sessions.map((s)=>{
-      const selectedRow=s.sessionId===selected;
-      return '<button class="dropdown-item" type="button" role="option" aria-selected="'+selectedRow+'" data-session="'+esc(s.sessionId)+'"><span><strong>'+esc(s.bundleId)+'</strong><span class="dropdown-sub">'+esc(fmt(longTime,s.createdAtMs)+' · '+(sessionStatus[s.status]||"会话")+' · '+(s.sessions>1?s.sessions+" 个会话 · ":"")+s.count+' 条')+'</span></span>'+(selectedRow?icon("check",true):"")+'</button>';
-    }).join(""):'<p class="dropdown-head">没有可读取的应用记录</p>';
-    if(focused && currentMenu==="processPopover") all("[data-session]",$("idh-session")).find((el)=>el.dataset.session===focused)?.focus();
+    paintAppDialog();
   }
-  $("idh-session").addEventListener("click",(event)=>{
-    const option=event.target.closest("[data-session]");
-    if(option && source.choose(option.dataset.session)) setMenu("",true);
+  $("processBtn").addEventListener("click",()=>{
+    setMenu("");
+    paintAppDialog();
+    $("appDialog").showModal();
+    $("appSearch").focus();
   });
-  $("idh-session").addEventListener("keydown",(event)=>{
-    if(!["ArrowDown","ArrowUp","Home","End"].includes(event.key)) return;
-    const options=all("[data-session]",$("idh-session")), current=options.indexOf(document.activeElement);
-    if(!options.length) return;
-    event.preventDefault();
-    const index=event.key==="Home"?0:event.key==="End"?options.length-1:
-      Math.max(0,Math.min(options.length-1,current+(event.key==="ArrowDown"?1:-1)));
-    options[index].focus();
+  $("appDialogClose").addEventListener("click",()=>$("appDialog").close());
+  $("appSearch").addEventListener("input",()=>{$("appChoices").innerHTML=appRows($("appSearch").value);});
+  $("appChoices").addEventListener("click",(event)=>{
+    const option=event.target.closest("[data-app]");
+    if(option && source.choose(option.dataset.app)) $("appDialog").close();
   });
   const source=panel.workspace({
     sessionOptions,
@@ -998,7 +1064,7 @@
     if(scope!=="session"&&!categories){toast("请先选择事件板块");return;}
     const events=(scope==="filtered"?currentFiltered:scope==="board"?state.events.filter((event)=>categories.includes(event.category)):state.events).map(cleanEvent);
     const suffix=scope==="board"?"-"+state.tab:scope==="filtered"?"-filtered":"";
-    download("idh-session-"+state.session.sessionId+suffix+".json",json({session:state.session,events}));
+    download("idh-app-"+state.session.bundleId+suffix+".json",json({session:state.session,events}));
   }
   let pendingClear=null;
   function askClearDisplay() {
@@ -1277,12 +1343,15 @@
     });
     const usb=usbRows.map((udid)=>'<button class="dropdown-item" type="button" role="option" data-usb="'+esc(udid)+'"><span><strong>USB 设备</strong><span class="dropdown-sub">'+esc(udid)+'</span></span></button>');
     $("idh-devices").innerHTML=(saved.length||usb.length)?saved.concat(usb).join(""):'<p class="dropdown-head">没有已保存的设备</p>';
+    const current=deviceRows.find((d)=>d.selected);
+    $("deviceTitle").textContent=current?current.address:"未连接";
+    $("deviceLink").textContent=current?((current.transport==="usb"?"USB":"LAN")+" · "+(current.online?"在线":"离线")):"";
   }
   async function loadDevices() {
     try{const data=await (await fetch("/api/devices")).json();deviceRows=data.devices||[];usbRows=data.usb||[];}catch{deviceRows=[];usbRows=[];}
     renderDevices();
   }
-  $("processBtn").addEventListener("click",loadDevices);
+  $("deviceBtn").addEventListener("click",loadDevices);
   $("idh-devices").addEventListener("click",async(event)=>{
     const remove=event.target.closest("[data-remove]");
     if(remove){event.stopPropagation();await post({action:"remove",id:remove.dataset.remove});loadDevices();return;}
