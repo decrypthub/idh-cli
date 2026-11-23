@@ -8,6 +8,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 from . import __version__
 from .models import AppEndpoint
+from .usbmux import resolve_endpoint
 
 
 class MCPTransportError(RuntimeError):
@@ -23,7 +24,7 @@ class MCPHTTPClient:
     def __init__(
         self, endpoint: AppEndpoint, *, timeout: float = 15.0, bearer_token: str | None = None
     ) -> None:
-        self.endpoint = endpoint
+        self.endpoint = resolve_endpoint(endpoint)
         self.timeout = timeout
         self.session_id: str | None = None
         self.initialized = False
@@ -108,6 +109,7 @@ def _get_json(url: str, timeout: float) -> Any | None:
 
 
 def probe_endpoint(endpoint: AppEndpoint, *, timeout: float = 1.0) -> AppEndpoint:
+    endpoint = resolve_endpoint(endpoint)
     health = _get_json(f"{endpoint.base_url}/health", timeout)
     apps = health.get("apps") if isinstance(health, dict) else None
     if (
