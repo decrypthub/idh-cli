@@ -145,8 +145,7 @@
       if (!sessions.some((session) => session.sessionId === selected)) changeSelection(sessions[0]?.sessionId || "");
       selectOptions(sessions);
       const notice = document.getElementById("idh-session-notice");
-      notice.textContent = history.status === 401 ? "请在手机 Manager 获取有效的设备会话只读凭证。"
-        : history.ok ? "" : "设备在线，会话暂时无法读取。";
+      notice.textContent = history.ok ? "" : "设备在线，会话暂时无法读取。";
       notice.hidden = !notice.textContent;
       catalog = {time: Date.now(), device, sessions};
       return catalog;
@@ -243,7 +242,7 @@
     const data = await result.json();
     if (result.ok) return response(data);
     const messages = {
-      settings_pairing_required: "请在手机 Manager 复制设备设置凭证并传给电脑面板。",
+      settings_pairing_required: "设备设置暂不可用。",
       revision_conflict: "设备配置已被修改。请重新载入后再应用。",
       invalid_settings: "设备会话限额需要整数，支持 1–2000 条、512–2097152 字节和 1–300 秒。",
       settings_storage_error: "设备无法读取或保存设置。",

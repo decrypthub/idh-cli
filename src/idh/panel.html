@@ -461,7 +461,7 @@
 <dialog class='mini-dialog' id='mcpMask' aria-labelledby='mcpHeading'>
   <div class='dialog-head'><h2 id='mcpHeading'>MCP 连接</h2><button class='btn icon-only ghost' id='mcpClose' type='button' aria-label='关闭 MCP'><svg class='ico' aria-hidden='true'><use href='#i-x'/></svg></button></div>
   <div class='dialog-body'>
-    <p class='helper'>在手机 Manager 复制设备会话只读凭证，传给客户端进程的 IDH_DEVICE_SESSION_TOKEN。</p>
+    <p class='helper'>面板地址即设备地址，USB 转发与局域网直连均可。</p>
     <pre class='code-body' id='mcpCommand'></pre>
     <p><button class='btn sm' id='mcpCopy' type='button'>复制命令</button></p>
   </div>
@@ -1270,7 +1270,7 @@
   let deviceRows=[];
   function renderDevices() {
     $("idh-devices").innerHTML=deviceRows.length?deviceRows.map((d)=>{
-      const sub=(d.online?"在线":"离线")+(d.paired?"":" · 未配对");
+      const sub=d.online?"在线":"离线";
       return '<button class="dropdown-item" type="button" role="option" aria-selected="'+d.selected+'" data-device="'+esc(d.id)+'"><span><strong>'+esc(d.address)+'</strong><span class="dropdown-sub">'+sub+'</span></span>'+(d.selected?icon("check",true):"")+'<span class="device-remove" role="button" tabindex="-1" title="移除" data-remove="'+esc(d.id)+'">×</span></button>';
     }).join(""):'<p class="dropdown-head">没有已保存的设备</p>';
   }

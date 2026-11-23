@@ -11,7 +11,6 @@ from idh.config import (
     load_selected,
     remove_endpoint,
     save_endpoint,
-    save_endpoint_token,
     save_selected,
 )
 from idh.models import AppEndpoint
@@ -67,7 +66,7 @@ def test_same_address_updates_kind_and_keeps_old_files(tmp_path) -> None:
     assert load_saved_endpoints(path)[0].kind == "device"
 
 
-def test_selected_and_session_token_round_trip(tmp_path) -> None:
+def test_selected_round_trip(tmp_path) -> None:
     path = tmp_path / "connections.json"
     save_endpoint(AppEndpoint.from_url("192.168.1.10:8088").with_kind("device"), path)
     save_endpoint(AppEndpoint.from_url("192.168.1.11:8088").with_kind("device"), path)
@@ -77,12 +76,6 @@ def test_selected_and_session_token_round_trip(tmp_path) -> None:
     # 无关写（增删端点）不清掉选中
     save_endpoint(AppEndpoint.from_url("192.168.1.12:8088").with_kind("device"), path)
     assert load_selected(path) == "http://192.168.1.11:8088/api/mcp"
-
-    assert save_endpoint_token("192.168.1.11:8088", "tok-abc", path) is True
-    assert save_endpoint_token("192.168.1.99:8088", "tok-abc", path) is False
-    loaded = {item.mcp_url: item for item in load_saved_endpoints(path)}
-    assert loaded["http://192.168.1.11:8088/api/mcp"].properties["session_token"] == "tok-abc"
-    assert "session_token" not in loaded["http://192.168.1.10:8088/api/mcp"].properties
 
 
 def test_invalid_saved_config_is_reported(tmp_path) -> None:

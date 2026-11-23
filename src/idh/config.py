@@ -57,9 +57,6 @@ def load_saved_endpoints(path: Path | None = None) -> list[AppEndpoint]:
             if kind is not None and kind not in _KINDS:
                 raise ValueError(f"connection config has an unknown kind: {target}")
             endpoint = AppEndpoint.from_url(url).with_kind(kind if isinstance(kind, str) else None)
-            token = item.get("session_token")
-            if isinstance(token, str) and token:
-                endpoint = endpoint.with_properties({"session_token": token})
             loaded.append(endpoint)
         return loaded
     except ValueError as exc:
@@ -128,23 +125,6 @@ def save_selected(value: str, path: Path | None = None) -> None:
     _write_endpoints(load_saved_endpoints(target), target, selected=value)
 
 
-def save_endpoint_token(value: str, token: str, path: Path | None = None) -> bool:
-    target = path or config_path()
-    canonical = AppEndpoint.from_url(value).mcp_url.casefold()
-    endpoints = load_saved_endpoints(target)
-    updated = False
-    items: list[AppEndpoint] = []
-    for item in endpoints:
-        if item.mcp_url.casefold() == canonical:
-            item = item.with_properties({"session_token": token})
-            updated = True
-        items.append(item)
-    if not updated:
-        return False
-    _write_endpoints(items, target)
-    return True
-
-
 def _write_endpoints(
     endpoints: Iterable[AppEndpoint], target: Path, *, selected: str | None = None
 ) -> None:
@@ -158,15 +138,13 @@ def _write_endpoints(
         except (OSError, UnicodeError, json.JSONDecodeError):
             pass
     items = sorted(endpoints, key=lambda item: item.mcp_url.casefold())
-    if any(item.kind or item.properties.get("session_token") for item in items):
+    if any(item.kind for item in items):
         payload: dict[str, object] = {
             "version": CONFIG_VERSION_KIND,
             "endpoints": [
                 {
                     "url": item.mcp_url,
                     **({"kind": item.kind} if item.kind else {}),
-                    **({"session_token": item.properties["session_token"]}
-                       if item.properties.get("session_token") else {}),
                 }
                 for item in items
             ],
