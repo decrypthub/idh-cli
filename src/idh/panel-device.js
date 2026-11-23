@@ -103,22 +103,44 @@
     return epoch > 0 && epoch <= 8640000000000000 ? format.format(epoch) : "";
   }
 
+  // 数据按 App 组织：会话按 bundleId 归并为一个应用条目。
+  // 条目保留 session 形状（sessionId=bundleId），复用现有下拉渲染。
+  function appsFrom(sessions) {
+    const map = new Map();
+    for (const s of sessions) {
+      let app = map.get(s.bundleId);
+      if (!app) {
+        app = {sessionId: s.bundleId, bundleId: s.bundleId, createdAtMs: s.createdAtMs,
+               status: s.status, count: 0, sessions: 0};
+        map.set(s.bundleId, app);
+      }
+      app.count += s.count;
+      app.sessions += 1;
+      if (s.createdAtMs > app.createdAtMs) {
+        app.createdAtMs = s.createdAtMs;
+        app.status = s.status;
+      }
+    }
+    return [...map.values()];
+  }
+
   function selectOptions(sessions) {
+    const apps = appsFrom(sessions);
     if (controls?.sessionOptions) {
-      controls.sessionOptions(sessions, selected);
+      controls.sessionOptions(apps, selected);
       return;
     }
     const menu = document.getElementById("idh-session");
-    const options = sessions.map((session) => [session.sessionId, [
-      session.bundleId, formatted(session.createdAtMs), stateLabels[session.status], session.count + " 条"
+    const options = apps.map((app) => [app.bundleId, [
+      app.bundleId, formatted(app.createdAtMs), stateLabels[app.status], app.count + " 条"
     ].filter(Boolean).join(" · ")]);
-    if (!options.length) options.push(["", "没有可读取的会话"]);
+    if (!options.length) options.push(["", "没有可读取的应用记录"]);
     if (JSON.stringify(options) !== menu.dataset.options) {
       menu.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
       menu.dataset.options = JSON.stringify(options);
     }
     menu.value = selected;
-    menu.disabled = !sessions.length;
+    menu.disabled = !apps.length;
   }
 
   function changeSelection(id) {
@@ -142,7 +164,7 @@
       if (!health.ok) throw new Error("设备连接不可用");
       const device = await health.json();
       const sessions = history.ok ? (await history.json()).sessions : [];
-      if (!sessions.some((session) => session.sessionId === selected)) changeSelection(sessions[0]?.sessionId || "");
+      if (!sessions.some((session) => session.bundleId === selected)) changeSelection(sessions[0]?.bundleId || "");
       selectOptions(sessions);
       const notice = document.getElementById("idh-session-notice");
       notice.textContent = history.ok ? "" : "设备在线，会话暂时无法读取。";
@@ -157,40 +179,48 @@
     }
   }
 
-  async function readEvents(session) {
+  // 读所选 App 的连续时间线：跨会话按 appSeq 升序翻页，最后倒序成最新在前
+  async function readEvents(app, expected) {
     const result = [];
-    const path = "/api/sessions/" + encodeURIComponent(session.sessionId) + "/events";
-    const through = session.lastSeq;
+    const path = "/api/apps/" + encodeURIComponent(app.bundleId) + "/events";
     let cursor = 0;
-    for (let index = 0; result.length < session.count && index < 20; ++index) {
-      const page = await realFetch(path + "?limit=100&after_seq=" + cursor);
-      if (!page.ok) throw new Error("设备会话摘要暂时无法读取");
+    for (let index = 0; result.length < expected && index < 80; ++index) {
+      const page = await realFetch(path + "?limit=500&after=" + cursor);
+      if (!page.ok) throw new Error("设备摘要暂时无法读取");
       const data = await page.json();
       for (const event of data.events) {
-        if (event.seq <= cursor) throw new Error("设备摘要序号重复或倒退");
-        if (event.seq > through) break;
-        result.push(event);
-        cursor = event.seq;
+        if (event.appSeq <= cursor) throw new Error("设备摘要序号重复或倒退");
+        // seq 归一为应用级连续序号：下游排序/选择/详情/搜索按应用时间线工作
+        result.push({...event, seq: event.appSeq});
+        cursor = event.appSeq;
       }
-      if (!data.events.length || !data.hasMore || cursor >= through) break;
+      if (!data.hasMore) break;
     }
-    if (result.length !== session.count || cursor !== through) throw new Error("已保存摘要与会话快照不一致，请刷新");
+    if (result.length !== expected) throw new Error("已保存摘要与应用快照不一致，请刷新");
     return result.reverse();
   }
 
   async function snapshot() {
     const {device, sessions} = await inspectDevice();
-    const session = sessions.find((item) => item.sessionId === selected);
-    if (!session) return {device, session: null, events: []};
-    const key = [session.sessionId, session.count, session.lastSeq].join("/");
+    const appSessions = sessions.filter((item) => item.bundleId === selected);
+    if (!appSessions.length) return {device, session: null, events: []};
+    const latest = appSessions[0];
+    const expected = appSessions.reduce((sum, item) => sum + item.count, 0);
+    const live = device.apps.find((app) => app.bundleId === selected);
+    const key = [selected, expected, latest.lastSeq].join("/");
     if (loaded?.key !== key) {
-      const pending = readEvents(session);
+      const pending = readEvents(latest, expected);
       loaded = {key, pending};
       pending.catch(() => {
         if (loaded?.pending === pending) loaded = null;
       });
     }
     const events = await loaded.pending;
+    // session 保留最新会话的形状：既有渲染（进程代、状态、计数）继续可用，
+    // 计数与序号提升为应用级（跨会话汇总），并附加会话数。
+    const session = {...latest, count: expected, lastSeq: events[0]?.appSeq ?? 0,
+      sessions: appSessions.length,
+      processGeneration: live?.processGeneration ?? latest.processGeneration};
     return {device, session, events};
   }
 
@@ -212,7 +242,7 @@
       ["记录更新", event.update ? "是" : ""]
     ].filter(([, value]) => value !== undefined && value !== "").map(([label, value]) => label + " " + value).join("\n");
     return {
-      seq: event.seq, category: event.category, categoryName: classes[event.category],
+      seq: event.appSeq ?? event.seq, category: event.category, categoryName: classes[event.category],
       algorithm: labels[event.category] + "事件", operation: phases[event.phase] || "摘要",
       timestamp: formatted(event.timeMs), detail, preview: ""
     };
@@ -276,7 +306,7 @@
         const data = await snapshot();
         if (pathname !== "/api/logs") {
           const seq = Number(pathname.split("/").pop());
-          const event = data.events.find((item) => item.seq === seq);
+          const event = data.events.find((item) => (item.appSeq ?? item.seq) === seq);
           return event ? response(asLog(event)) : response({error: "unknown_event"}, 404);
         }
         const since = Number(searchParams.get("since") || 0);
@@ -319,7 +349,7 @@
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = diagnose ? "idhjd-device-diagnostics.json" : "idh-session-" + session.sessionId + ".json";
+      link.download = diagnose ? "idhjd-device-diagnostics.json" : "idh-app-" + session.bundleId + ".json";
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch {
@@ -377,7 +407,7 @@
     return Object.freeze({
       snapshot,
       choose(id) {
-        if (!catalog?.sessions.some((session) => session.sessionId === id)) return false;
+        if (!catalog?.sessions.some((session) => session.bundleId === id)) return false;
         changeSelection(id);
         return true;
       }

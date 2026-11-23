@@ -302,8 +302,8 @@
     </div>
     <div class='top-actions'>
       <div class='anchor'>
-        <button class='btn session-btn' id='processBtn' type='button' aria-controls='processPopover' aria-expanded='false' title='切换设备会话'>
-          <span class='session-info'><strong id='session-title'>设备会话</strong><small id='session-meta'>正在读取…</small></span>
+        <button class='btn session-btn' id='processBtn' type='button' aria-controls='processPopover' aria-expanded='false' title='切换应用'>
+          <span class='session-info'><strong id='session-title'>应用记录</strong><small id='session-meta'>正在读取…</small></span>
           <svg class='ico sm' aria-hidden='true'><use href='#i-chevron'/></svg>
         </button>
         <div class='dropdown right session-dropdown' id='processPopover' hidden>
@@ -313,8 +313,8 @@
             <input id='deviceAddr' type='text' placeholder='设备地址 127.0.0.1:8088' autocomplete='off' spellcheck='false'/>
             <button class='btn sm' id='deviceAddBtn' type='button'>添加</button>
           </div>
-          <div class='dropdown-head'>切换设备会话</div>
-          <div id='idh-session' role='listbox' aria-label='切换设备会话'></div>
+          <div class='dropdown-head'>切换应用</div>
+          <div id='idh-session' role='listbox' aria-label='切换应用'></div>
           <div class='dropdown-divider'></div>
           <div class='dropdown-head'>进程详情</div>
           <dl class='proc-details' id='procinfo'></dl>
@@ -350,7 +350,7 @@
         <div class='dropdown right' id='toolbarMenu' hidden>
           <button class='dropdown-item' type='button' id='tabDownloadBtn' data-action='export-board'>下载当前板块 <svg class='ico sm' aria-hidden='true'><use href='#i-download'/></svg></button>
           <button class='dropdown-item' type='button' data-action='export-filter'>导出当前筛选结果 <svg class='ico sm' aria-hidden='true'><use href='#i-download'/></svg></button>
-          <button class='dropdown-item' type='button' data-action='export-session'>下载完整会话摘要</button>
+          <button class='dropdown-item' type='button' data-action='export-session'>下载完整应用记录</button>
           <div class='dropdown-divider'></div>
           <button class='dropdown-item' type='button' id='tabClearBtn' data-action='clear-display'>清空本板块显示</button>
           <button class='dropdown-item' type='button' id='tabRestoreBtn' data-action='restore-display' hidden>恢复本板块显示</button>
@@ -588,18 +588,19 @@
   });
   function sessionOptions(sessions,selected) {
     const info=sessions.find((s)=>s.sessionId===selected);
-    $("session-title").textContent=info?.bundleId || "设备会话";
+    $("session-title").textContent=info?.bundleId || "应用记录";
     $("session-meta").textContent=info
-      ? [sessionStatus[info.status] || "会话",fmt(longTime,info.createdAtMs),info.count+" 条"].join(" · ")
-      : "暂无可读取的会话";
+      ? [sessionStatus[info.status] || "会话",fmt(longTime,info.createdAtMs),
+         (info.sessions>1?info.sessions+" 个会话 · ":"")+info.count+" 条"].join(" · ")
+      : "暂无可读取的应用记录";
     const key=JSON.stringify(sessions.map((s)=>[s.sessionId,s.bundleId,s.status,s.count,s.createdAtMs]))+selected;
     if(key===sessionOptionsKey) return;
     sessionOptionsKey=key;
     const focused=$("idh-session").contains(document.activeElement)?document.activeElement.dataset.session:"";
     $("idh-session").innerHTML=sessions.length?sessions.map((s)=>{
       const selectedRow=s.sessionId===selected;
-      return '<button class="dropdown-item" type="button" role="option" aria-selected="'+selectedRow+'" data-session="'+esc(s.sessionId)+'"><span><strong>'+esc(s.bundleId)+'</strong><span class="dropdown-sub">'+esc(fmt(longTime,s.createdAtMs)+' · '+(sessionStatus[s.status]||"会话")+' · '+s.count+' 条')+'</span></span>'+(selectedRow?icon("check",true):"")+'</button>';
-    }).join(""):'<p class="dropdown-head">没有可读取的会话</p>';
+      return '<button class="dropdown-item" type="button" role="option" aria-selected="'+selectedRow+'" data-session="'+esc(s.sessionId)+'"><span><strong>'+esc(s.bundleId)+'</strong><span class="dropdown-sub">'+esc(fmt(longTime,s.createdAtMs)+' · '+(sessionStatus[s.status]||"会话")+' · '+(s.sessions>1?s.sessions+" 个会话 · ":"")+s.count+' 条')+'</span></span>'+(selectedRow?icon("check",true):"")+'</button>';
+    }).join(""):'<p class="dropdown-head">没有可读取的应用记录</p>';
     if(focused && currentMenu==="processPopover") all("[data-session]",$("idh-session")).find((el)=>el.dataset.session===focused)?.focus();
   }
   $("idh-session").addEventListener("click",(event)=>{
@@ -697,9 +698,10 @@
       ["App",active?.bundleId??session?.bundleId??"—"],
       [active?"当前 PID":"会话 PID",active?.pid??session?.pid??"—"],
       ["进程代",active?.processGeneration??session?.processGeneration??"—"]];
-    if(session)pairs.push(["会话 ID",session.sessionId],["已提交",String(session.count)+" 条"],["最新序号",session.lastSeq??"—"]);
+    if(session)pairs.push(["会话数",String(session.sessions??1)],["最新会话",session.sessionId],
+      ["已提交",String(session.count)+" 条"],["最新序号",session.lastSeq??"—"]);
     $("procinfo").innerHTML=pairs.map(([label,value])=>'<dt>'+esc(label)+'</dt><dd class="mono">'+esc(value)+'</dd>').join("");
-    $("dumpApp").textContent=session?.bundleId??"无当前会话";
+    $("dumpApp").textContent=session?.bundleId??"无当前应用";
   }
   function renderIndicators() {
     const online=state.network==="online", offline=state.network==="offline";

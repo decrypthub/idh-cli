@@ -807,6 +807,7 @@ def _run_auto_update(args: argparse.Namespace) -> None:
 
 
 _PANEL_SESSION_ROUTE = re.compile(r"/api/sessions(?:/[A-Za-z0-9_-]{1,64}(?:/events)?)?")
+_PANEL_APP_EVENTS_ROUTE = re.compile(r"/api/apps/[A-Za-z0-9][A-Za-z0-9._-]{0,254}/events")
 _PANEL_SETTINGS_ROUTE = "/api/session-settings"
 _PANEL_SETTINGS_MAX_BYTES = 4096
 # 设备侧注入接口（GET 读 / POST 写）与本机设备注册表
@@ -1076,12 +1077,13 @@ def _run_panel(args: argparse.Namespace) -> int:
             session_route = _PANEL_SESSION_ROUTE.fullmatch(target.path) and (
                 not target.query or target.path.endswith("/events")
             )
+            app_events_route = _PANEL_APP_EVENTS_ROUTE.fullmatch(target.path)
             if not target.query and target.path in {"/", "/index.html"}:
                 body = page
                 kind = "text/html; charset=utf-8"
             elif not target.query and target.path in assets:
                 body, kind = assets[target.path]
-            elif session_route or self.path == "/health" or (
+            elif session_route or app_events_route or self.path == "/health" or (
                 not target.query and target.path in _PANEL_DEVICE_READ
             ):
                 if current["endpoint"] is None:
