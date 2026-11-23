@@ -46,7 +46,7 @@ idh disconnect 192.168.100.65:8088
 idh disconnect --all
 ```
 
-`connect` 默认先验证 `/api/stats`；设备暂时离线但仍需预先保存时使用 `--force`。
+`connect` 先请求 `GET /health`。应答是 `idhjd` 时保存为 `device`，`apps` 为空也算在线。否则再验证 `/api/stats`，有进程就保存为 `app`。暂时离线时用 `--force` 保存地址；探测失败不清除已保存的种类。
 可通过 `IDH_CONFIG_PATH` 修改配置位置，或用 `--no-saved` 让单次命令忽略已保存连接。
 
 ```bash
@@ -196,18 +196,25 @@ idh mcp --target 1 --endpoint http://127.0.0.1:8088
 
 ### 越狱版设备会话
 
-在 IOSDecryptHub Manager 中启用设备会话模式并复制只读凭证。通过已授权的调试通道把设备的 `127.0.0.1:8088` 转发到 PC 本机，将凭证设置为 `IDH_DEVICE_SESSION_TOKEN` 环境变量后启动网关。
+在 IOSDecryptHub Manager 中启用设备会话模式并复制只读凭证。通过已授权的调试通道把设备的 `127.0.0.1:8088` 转发到 PC 本机，将凭证设置为 `IDH_DEVICE_SESSION_TOKEN`。`mcp`、`call`、`tools` 认出 `device` 后共用这一条连接。配对凭证只发给 `127.0.0.1`。
+
+使用 `idh panel` 打开电脑端原版工作台。要编辑「设置 → 配置 JSON」和「日志」中的会话限额，再从 Manager 复制独立的设备设置凭证，并传入启动面板的 `IDH_DEVICE_SETTINGS_TOKEN`。只读凭证不能保存配置。写入持续保存在设备上，从下一场会话起生效。
 
 ```bash
-idh mcp --device-session --endpoint http://127.0.0.1:8088
+idh mcp --endpoint http://127.0.0.1:8088
+idh call list_sessions --endpoint http://127.0.0.1:8088
 ```
 
-此入口直接读取设备会话。目标 App 退出后，`list_sessions`、`get_session` 和 `read_session_events` 仍可查询已经保存的摘要。服务重启或重新配对后，更新客户端使用的凭证。
+`idh mcp --device-session --endpoint http://127.0.0.1:8088` 仍可用。旧包没有 `/health` 时用这个别名。多条连接时用地址或连接 ID 指定。App 仍用 `--target <bundle>`。
+
+目标 App 退出后，上述三个只读工具仍能读已保存摘要。关闭会话模式会撤销会话配对，之后读取失败。服务重启或重新配对后，更新客户端使用的凭证。
+
+`get_process_identity` 不使用这把会话凭证。它读取某个在线进程，凭证放在 `IDH_PROCESS_TOKEN`，同样只发到 `127.0.0.1`。同一个 App 有多个进程时，参数里带上 `processGeneration`。
 
 ## 连接状态
 
-- `devices` / `connect` 每次都会用 `/api/stats` 探测所有已保存连接，离线设备显示
-  `offline` 状态。
+- `devices` / `connect` 先探测 `GET /health`，认不出守护进程时再探测 `/api/stats`。离线地址显示
+  `offline`，已保存的 `device` 或 `app` 种类保留。
 - 路由前（`resolve_live_target`）会对目标做 HTTP 复核，离线连接直接过滤。
 
 ## 开发

@@ -20,6 +20,8 @@ class AppEndpoint:
     port: int
     properties: Mapping[str, str] = field(default_factory=dict)
     source: str = "manual"
+    kind: str | None = None
+    observed_apps: tuple[str, ...] = ()
 
     @classmethod
     def from_url(cls, value: str) -> AppEndpoint:
@@ -126,8 +128,14 @@ class AppEndpoint:
             "bundle": self.bundle_id,
             "addresses": list(self.addresses),
             "port": self.port,
-            "web": self.panel_url,
+            "web": None if self.kind == "device" else self.panel_url,
             "mcp": self.mcp_url,
             "source": self.source,
+            "kind": self.kind,
+            "apps": list(self.observed_apps),
             "properties": dict(self.properties),
         }
+
+    def with_kind(self, kind: str | None) -> AppEndpoint:
+        """Return a copy with a durable connection kind. ``None`` leaves the kind unset."""
+        return replace(self, kind=kind)

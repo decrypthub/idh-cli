@@ -433,6 +433,11 @@ class GatewayServer:
                 return _tool_result(inventory(self._endpoints()))
             if name == "idh_get_panel_url":
                 endpoint = resolve_live_target(self._endpoints(), arguments.get("target"))
+                if endpoint.kind == "device":
+                    return _tool_error(
+                        "a device connection has no app panel",
+                        code="device_panel_unavailable",
+                    )
                 return _tool_result({"target_id": endpoint.key, "url": endpoint.panel_url})
             if name == "idh_list_tools":
                 endpoint = resolve_live_target(self._endpoints(), arguments.get("target"))

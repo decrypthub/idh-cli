@@ -37,6 +37,28 @@ def test_remove_and_clear_saved_endpoints(tmp_path) -> None:
     assert load_saved_endpoints(path) == []
 
 
+def test_same_address_updates_kind_and_keeps_old_files(tmp_path) -> None:
+    path = tmp_path / "connections.json"
+    path.write_text(
+        json.dumps({"version": 1, "endpoints": ["http://192.168.100.65:8088/api/mcp"]}),
+        encoding="utf-8",
+    )
+    loaded = load_saved_endpoints(path)
+    assert loaded[0].kind is None
+
+    assert save_endpoint(loaded[0].with_kind("device"), path) is True
+    assert save_endpoint(loaded[0].with_kind("device"), path) is False
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["version"] == 2
+    assert saved["endpoints"] == [
+        {"url": "http://192.168.100.65:8088/api/mcp", "kind": "device"}
+    ]
+    assert load_saved_endpoints(path)[0].kind == "device"
+
+    assert save_endpoint(AppEndpoint.from_url("192.168.100.65:8088"), path) is False
+    assert load_saved_endpoints(path)[0].kind == "device"
+
+
 def test_invalid_saved_config_is_reported(tmp_path) -> None:
     path = tmp_path / "connections.json"
     path.write_text("not-json", encoding="utf-8")

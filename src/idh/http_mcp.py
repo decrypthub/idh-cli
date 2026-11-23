@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
@@ -93,22 +94,46 @@ class MCPHTTPClient:
             raise MCPTransportError(f"device returned invalid JSON: {exc}") from exc
 
 
-def probe_endpoint(endpoint: AppEndpoint, *, timeout: float = 1.0) -> AppEndpoint:
-    panel_path = endpoint.properties.get("panel_path", "/").rstrip("/")
+def _get_json(url: str, timeout: float) -> Any | None:
     request = Request(
-        f"{endpoint.base_url}{panel_path}/api/stats",
+        url,
         headers={"Accept": "application/json", "User-Agent": f"idh/{__version__}"},
         method="GET",
     )
     try:
         with urlopen(request, timeout=timeout) as response:
-            stats = json.loads(response.read())
+            return json.loads(response.read())
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
-        return endpoint.with_properties({"status": "unreachable"})
+        return None
 
+
+def probe_endpoint(endpoint: AppEndpoint, *, timeout: float = 1.0) -> AppEndpoint:
+    health = _get_json(f"{endpoint.base_url}/health", timeout)
+    apps = health.get("apps") if isinstance(health, dict) else None
+    if (
+        isinstance(health, dict)
+        and health.get("ok") is True
+        and health.get("service") == "idhjd"
+        and isinstance(apps, list)
+    ):
+        bundles = tuple(
+            app["bundleId"]
+            for app in apps
+            if isinstance(app, dict) and isinstance(app.get("bundleId"), str) and app["bundleId"]
+        )
+        return replace(
+            endpoint.with_kind("device").with_properties(
+                {"status": "online", "app_count": str(len(apps))}
+            ),
+            observed_apps=bundles,
+        )
+
+    panel_path = endpoint.properties.get("panel_path", "/").rstrip("/")
+    stats = _get_json(f"{endpoint.base_url}{panel_path}/api/stats", timeout)
     process = stats.get("process") if isinstance(stats, dict) else None
     if not isinstance(process, dict) or not process.get("pid"):
-        return endpoint.with_properties({"status": "unreachable", "error": "invalid_stats"})
+        reason = "invalid_stats" if stats is not None else None
+        return endpoint.with_properties({"status": "unreachable", "error": reason})
     values = {
         "status": "online",
         "app_name": process.get("appName") or process.get("processName"),
@@ -118,4 +143,4 @@ def probe_endpoint(endpoint: AppEndpoint, *, timeout: float = 1.0) -> AppEndpoin
         "system_version": process.get("systemVersion"),
         "idh_version": stats.get("version") if isinstance(stats, dict) else None,
     }
-    return endpoint.with_properties(values)
+    return endpoint.with_kind("app").with_properties(values)
