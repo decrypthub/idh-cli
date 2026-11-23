@@ -196,20 +196,21 @@ idh mcp --target 1 --endpoint http://127.0.0.1:8088
 
 ### 越狱版设备会话
 
-在 IOSDecryptHub Manager 中启用设备会话模式并复制只读凭证。通过已授权的调试通道把设备的 `127.0.0.1:8088` 转发到 PC 本机，将凭证设置为 `IDH_DEVICE_SESSION_TOKEN`。`mcp`、`call`、`tools` 认出 `device` 后共用这一条连接。配对凭证只发给 `127.0.0.1`。
+`idhjd` 只绑设备回环 `127.0.0.1:8088`，没有自定义认证——与 frida-server 同一模型，信任来自传输层：
 
-使用 `idh panel` 打开电脑端原版工作台。要编辑「设置 → 配置 JSON」和「日志」中的会话限额，再从 Manager 复制独立的设备设置凭证，并传入启动面板的 `IDH_DEVICE_SETTINGS_TOKEN`。只读凭证不能保存配置。写入持续保存在设备上，从下一场会话起生效。
+- **USB**：`idh connect usb`（或 `usb:<udid>`）经 usbmuxd 直连，插线即授权，等同 `frida -U`。`IDH_USBMUXD` 可指向其他机器的 usbmuxd（`host:port` 或 unix socket 路径，例如经 SSH 转发的 macOS `/var/run/usbmuxd`）。
+- **SSH 转发**：`ssh -L 8088:127.0.0.1:8088 root@<device>` 后用 `idh connect 127.0.0.1:8088`。
+- **局域网**：设备上由 root 创建 `/private/var/db/idhjd-v1/listen-remote` 并重启 idhjd 后绑 `0.0.0.0`，等同 `frida-server -l`；之后 `idh connect <device IP>:8088`。默认不开。
 
 ```bash
-idh mcp --endpoint http://127.0.0.1:8088
-idh call list_sessions --endpoint http://127.0.0.1:8088
+idh connect usb
+idh mcp --endpoint usb
+idh call list_sessions --endpoint usb:<udid>
 ```
 
-`idh mcp --device-session --endpoint http://127.0.0.1:8088` 仍可用。旧包没有 `/health` 时用这个别名。多条连接时用地址或连接 ID 指定。App 仍用 `--target <bundle>`。
+`idh mcp --device-session --endpoint <endpoint>` 仍可用作别名。多条连接时用地址或连接 ID 指定。App 仍用 `--target <bundle>`。
 
-目标 App 退出后，上述三个只读工具仍能读已保存摘要。关闭会话模式会撤销会话配对，之后读取失败。服务重启或重新配对后，更新客户端使用的凭证。
-
-`get_process_identity` 不使用这把会话凭证。它读取某个在线进程，凭证放在 `IDH_PROCESS_TOKEN`，同样只发到 `127.0.0.1`。同一个 App 有多个进程时，参数里带上 `processGeneration`。
+目标 App 退出后，只读工具仍能读已保存摘要。关闭会话模式不影响连接本身。
 
 ## 连接状态
 

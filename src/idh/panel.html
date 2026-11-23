@@ -1267,21 +1267,25 @@
 
   // ---- 设备管理 + 注入范围 ----
   const post=(body)=>fetch("/api/devices",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then((r)=>r.json());
-  let deviceRows=[];
+  let deviceRows=[],usbRows=[];
   function renderDevices() {
-    $("idh-devices").innerHTML=deviceRows.length?deviceRows.map((d)=>{
-      const sub=d.online?"在线":"离线";
+    const saved=deviceRows.map((d)=>{
+      const sub=(d.transport==="usb"?"USB · ":"")+(d.online?"在线":"离线");
       return '<button class="dropdown-item" type="button" role="option" aria-selected="'+d.selected+'" data-device="'+esc(d.id)+'"><span><strong>'+esc(d.address)+'</strong><span class="dropdown-sub">'+sub+'</span></span>'+(d.selected?icon("check",true):"")+'<span class="device-remove" role="button" tabindex="-1" title="移除" data-remove="'+esc(d.id)+'">×</span></button>';
-    }).join(""):'<p class="dropdown-head">没有已保存的设备</p>';
+    });
+    const usb=usbRows.map((udid)=>'<button class="dropdown-item" type="button" role="option" data-usb="'+esc(udid)+'"><span><strong>USB 设备</strong><span class="dropdown-sub">'+esc(udid)+'</span></span></button>');
+    $("idh-devices").innerHTML=(saved.length||usb.length)?saved.concat(usb).join(""):'<p class="dropdown-head">没有已保存的设备</p>';
   }
   async function loadDevices() {
-    try{const data=await (await fetch("/api/devices")).json();deviceRows=data.devices||[];}catch{deviceRows=[];}
+    try{const data=await (await fetch("/api/devices")).json();deviceRows=data.devices||[];usbRows=data.usb||[];}catch{deviceRows=[];usbRows=[];}
     renderDevices();
   }
   $("processBtn").addEventListener("click",loadDevices);
   $("idh-devices").addEventListener("click",async(event)=>{
     const remove=event.target.closest("[data-remove]");
     if(remove){event.stopPropagation();await post({action:"remove",id:remove.dataset.remove});loadDevices();return;}
+    const usbRow=event.target.closest("[data-usb]");
+    if(usbRow){await post({action:"add",usb:usbRow.dataset.usb});loadDevices();return;}
     const row=event.target.closest("[data-device]");
     if(row && !row.getAttribute("aria-selected").includes("true")){
       const data=await post({action:"select",id:row.dataset.device});

@@ -45,6 +45,7 @@ from .selfupdate import (
 )
 from .settings import load_settings, update_settings
 from .status import status
+from .usbmux import UsbMuxError, resolve_endpoint, usb_endpoint, usbmux_devices
 
 PROBE_TIMEOUT = 3.0
 
@@ -57,7 +58,10 @@ def _manual_endpoints(values: Sequence[str], *, include_saved: bool = True) -> l
     endpoints = list(load_saved_endpoints()) if include_saved else []
     seen = {endpoint.mcp_url.casefold() for endpoint in endpoints}
     for value in values:
-        manual = AppEndpoint.from_url(value)
+        if value == "usb" or value.startswith("usb:"):
+            manual = _pick_usb_endpoint(value[4:] or None)
+        else:
+            manual = AppEndpoint.from_url(value)
         key = manual.mcp_url.casefold()
         if key in seen:
             continue
@@ -66,11 +70,31 @@ def _manual_endpoints(values: Sequence[str], *, include_saved: bool = True) -> l
     return endpoints
 
 
+def _pick_usb_endpoint(udid: str | None = None) -> AppEndpoint:
+    """frida -U 等价入口：usb 或 usb:<udid>。单设备免选，多设备按 udid 选。"""
+    try:
+        devices = usbmux_devices()
+    except UsbMuxError as exc:
+        raise ValueError(f"cannot reach usbmuxd: {exc}") from exc
+    if udid:
+        matches = [device for device in devices if device["udid"].casefold() == udid.casefold()]
+        if not matches:
+            raise ValueError(f"usb device not attached: {udid}")
+    elif len(devices) == 1:
+        matches = devices
+    elif not devices:
+        raise ValueError("no USB devices attached")
+    else:
+        lines = "\n".join(f"  {device['udid']}" for device in devices)
+        raise ValueError(f"multiple USB devices attached; use usb:<udid>\n{lines}")
+    return usb_endpoint(matches[0]["udid"])
+
+
 def _probed_endpoints(endpoints: Sequence[AppEndpoint]) -> list[AppEndpoint]:
     if not endpoints:
         return []
     with ThreadPoolExecutor(max_workers=min(8, len(endpoints))) as pool:
-        return list(pool.map(probe_endpoint, endpoints))
+        return list(pool.map(probe_endpoint, (resolve_endpoint(e) for e in endpoints)))
 
 
 def _endpoint_label(endpoint: AppEndpoint) -> str:
@@ -123,6 +147,7 @@ def _resolve_device(
 
 
 def _device_client(endpoint: AppEndpoint) -> MCPHTTPClient:
+    endpoint = resolve_endpoint(endpoint)
     if endpoint.mcp_url != endpoint.base_url + "/api/mcp":
         raise UsageError("idh: the device endpoint does not expose a session MCP URL")
     return MCPHTTPClient(endpoint)
@@ -182,7 +207,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     connect = subparsers.add_parser("connect", help="save and connect a device address")
-    connect.add_argument("endpoint", nargs="?", help="device address, e.g. 192.168.100.65:8088")
+    connect.add_argument("endpoint", nargs="?", help="device address (192.168.100.65:8088), usb, or usb:<udid>")
     connect.add_argument("--timeout", type=float, default=PROBE_TIMEOUT, help="HTTP probe timeout in seconds")
     connect.add_argument("--force", action="store_true", help="save the address even when the device is unreachable")
     connect.add_argument("--json", action="store_true", help="output JSON")
@@ -300,11 +325,14 @@ def _run_connect(args: argparse.Namespace) -> int:
             _print_inventory(data)
         return 0
     try:
-        endpoint = AppEndpoint.from_url(args.endpoint)
+        if args.endpoint == "usb" or args.endpoint.startswith("usb:"):
+            endpoint = _pick_usb_endpoint(args.endpoint[4:] or None)
+        else:
+            endpoint = AppEndpoint.from_url(args.endpoint)
     except ValueError as exc:
         print(f"idh: {exc}", file=sys.stderr)
         return 2
-    probed = probe_endpoint(endpoint, timeout=max(0.1, args.timeout))
+    probed = probe_endpoint(resolve_endpoint(endpoint), timeout=max(0.1, args.timeout))
     online = probed.properties.get("status") == "online"
     if not online and not args.force:
         print(
@@ -359,13 +387,27 @@ def _run_disconnect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _usb_available(endpoints: Sequence[AppEndpoint]) -> list[dict]:
+    saved = {endpoint.properties.get("usb_udid") for endpoint in endpoints}
+    try:
+        devices = usbmux_devices(timeout=1.0)
+    except UsbMuxError:
+        return []
+    return [device for device in devices if device["udid"] not in saved]
+
+
 def _run_devices(args: argparse.Namespace) -> int:
     endpoints = _manual_endpoints(args.endpoint, include_saved=not args.no_saved)
     data = inventory(endpoints)
+    available = _usb_available(endpoints)
     if args.json:
+        if available:
+            data["usb_available"] = available
         print(json.dumps(data, ensure_ascii=False, indent=2))
     else:
         _print_inventory(data)
+        for device in available:
+            print(f"  [usb] {device['udid']}  (connect: idh connect usb:{device['udid']})")
     return 0
 
 
@@ -777,6 +819,7 @@ _BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}")
 def _panel_request(
     endpoint: AppEndpoint, path: str, *, body: bytes | None = None
 ) -> tuple[int, object]:
+    endpoint = resolve_endpoint(endpoint)
     headers = {"Accept": "application/json"}
     if body is not None:
         headers["Content-Type"] = "application/json"
@@ -825,11 +868,13 @@ def _run_panel(args: argparse.Namespace) -> int:
                     "id": item.mcp_url,
                     "address": item.base_url,
                     "kind": item.kind,
+                    "transport": item.properties.get("transport"),
                     "online": item.properties.get("status") == "online",
                     "selected": item.mcp_url == selected,
                 }
                 for item in probed
             ],
+            "usb": [device["udid"] for device in _usb_available(saved)],
             "selected": selected,
         }
 
@@ -901,12 +946,16 @@ def _run_panel(args: argparse.Namespace) -> int:
                 return
             action = request.get("action")
             if action == "add":
+                udid = request.get("usb")
                 try:
-                    endpoint = AppEndpoint.from_url(str(request.get("address") or ""))
+                    if udid:
+                        endpoint = _pick_usb_endpoint(str(udid))
+                    else:
+                        endpoint = AppEndpoint.from_url(str(request.get("address") or ""))
                 except ValueError:
                     self.write_json(400, {"error": "invalid_address"})
                     return
-                probed = probe_endpoint(endpoint, timeout=3)
+                probed = probe_endpoint(resolve_endpoint(endpoint), timeout=3)
                 if probed.properties.get("status") == "online" and probed.kind != "device":
                     self.write_json(400, {"error": "not_a_device"})
                     return
@@ -1071,6 +1120,11 @@ def _run_panel(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     parser = build_parser()
     args = parser.parse_args(_normalize_argv(sys.argv[1:] if argv is None else argv))
     try:
