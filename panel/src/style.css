@@ -985,3 +985,5 @@ kbd { color:var(--muted); border:1px solid var(--line); padding:1px 5px; border-
 .btn.ghost:hover:not(:disabled) { color:var(--ink); background:rgba(255,255,255,.04); }
 .tool-header h2 { white-space:nowrap; }
 .tool-table .app-state { white-space:nowrap; }
+.hdr-mark { display:grid; place-items:center; color:var(--bg); }
+.hdr-raven { width:18px; height:16px; display:block; }
