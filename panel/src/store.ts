@@ -48,7 +48,7 @@ export const store = reactive({
   prefs: loadPrefs(),
   limit: 0, // 由 prefs.displayCap 初始化
   seq: null as number | null,
-  detailTab: 'data' as 'data' | 'event' | 'context' | 'raw',
+  detailTab: 'data' as 'data' | 'context' | 'raw',
   // 注入范围
   injectData: null as { apps?: InstalledApp[]; scope?: string[]; error?: string } | null,
   injectAt: 0,

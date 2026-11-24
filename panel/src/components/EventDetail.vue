@@ -3,11 +3,11 @@ import { computed, ref, watch } from 'vue';
 import { store, copyText, downloadText, downloadBlob, toast } from '../store';
 import { I } from '../icons';
 import {
-  getCategory, getPhase, titleFor, shortTime, longTime, fmt,
+  getCategory, getPhase, titleFor, operationLabel, sizeLabel, longTime, fmt,
   KIND_LABELS, SESSION_STATUS, cleanEvent, type EventItem,
 } from '../model';
 
-const TABS: Array<['data' | 'event' | 'context' | 'raw', string]> = [['data', '数据详情'], ['event', '事件信息'], ['context', '关联信息'], ['raw', '摘要 JSON']];
+const TABS: Array<['data' | 'context' | 'raw', string]> = [['data', '数据详情'], ['context', '关联信息'], ['raw', '摘要 JSON']];
 const byteFormats: Array<[string, string]> = [['bytes', '原始字节'], ['hex', '十六进制'], ['base64', 'Base64']];
 const LIMIT = 64 * 1024;
 
@@ -18,15 +18,40 @@ const kv = (rows: Array<[string, unknown]>) => rows;
 const sourceRows = computed<[string, unknown][]>(() => [
   ['来源 App', store.session?.bundleId], ['会话 ID', store.session?.sessionId],
   ['会话状态', store.session?.status ? SESSION_STATUS[store.session.status] : undefined]]);
+// 数据详情页的事件信息：算法/操作/输入输出 + 通用字段，一行一项
 const eventRows = computed<[string, unknown][]>(() => {
   const e = event.value;
-  return e ? [['会话序号', e.seq], ['原记录序号', e.sourceSeq], ['事件类别', getCategory(e.category)],
+  if (!e) return [];
+  const rows: Array<[string, unknown]> = [
+    ['算法', e.algorithm], ['操作', operationLabel(e.operation)],
+    ['输入大小', e.inLen != null ? e.inLen + ' B' : undefined],
+    ['输出大小', e.outLen != null ? e.outLen + ' B' : undefined],
+    ['详情', e.detail],
+    ['会话序号', e.seq], ['原记录序号', e.sourceSeq], ['事件类别', getCategory(e.category)],
     ['事件类型', KIND_LABELS[e.kind ?? ''] ?? e.kind], ['事件阶段', getPhase(e.phase)],
-    ['记录更新', e.update ? '是' : '否']] : [];
+    ['记录更新', e.update ? '是' : '否'],
+  ];
+  return rows.filter(([, v]) => v !== undefined && v !== '');
 });
 const contextRows = computed<[string, unknown][]>(() => {
   const e = event.value;
   return e ? [['关联 ID', e.callId], ['上级关联', e.parentCallId], ['异步任务', e.asyncTaskId]] : [];
+});
+
+// ---- 输入/输出摘要内容（设备会话摘要携带的有界前缀字节与文本预览）----
+const hasIO = computed(() => {
+  const e = event.value;
+  return !!(e && (e.inLen != null || e.outLen != null || e.inputHex || e.outputHex || e.preview));
+});
+const spacedHex = (h?: string) => (h ?? '').replace(/(..)/g, '$1 ').trim();
+/** hex 长度(字符)/2 < 真实字节数 → 摘要只带前缀 */
+const inTrunc = computed(() => {
+  const e = event.value;
+  return !!(e?.inputHex && e.inLen != null && e.inputHex.length / 2 < e.inLen);
+});
+const outTrunc = computed(() => {
+  const e = event.value;
+  return !!(e?.outputHex && e.outLen != null && e.outputHex.length / 2 < e.outLen);
 });
 
 // ---- 本地字节预览（不关联设备数据，明确标注来源）----
@@ -90,7 +115,7 @@ const json = (x: unknown) => JSON.stringify(x, null, 2);
     <header class="detail-header">
       <div>
         <div class="detail-title-row"><h2>{{ titleFor(event) }}</h2><span class="pill phase">{{ getPhase(event.phase) }}</span></div>
-        <div class="detail-subtitle"><span class="mono">#{{ event.seq }}</span><span>{{ fmt(longTime, event.timeMs) }}</span><span>{{ store.session?.bundleId }}</span></div>
+        <div class="detail-subtitle"><span class="mono">#{{ event.seq }}</span><span>{{ fmt(longTime, event.timeMs) }}</span><span v-if="sizeLabel(event)" class="mono">{{ sizeLabel(event) }}</span><span>{{ store.session?.bundleId }}</span></div>
       </div>
       <div class="detail-actions">
         <button class="btn sm" type="button" @click="copyText(json(cleanEvent(event)))">
@@ -107,10 +132,26 @@ const json = (x: unknown) => JSON.stringify(x, null, 2);
     <div class="detail-scroll"><div class="content-max">
       <!-- 数据详情 -->
       <template v-if="store.detailTab === 'data'">
-        <div class="io-panels">
-          <section class="io-section in-card"><header class="io-card-head"><h3>输入 / INPUT</h3><span class="io-status">设备未提供原始字节</span></header><p>当前会话只保存事件摘要，不包含输入数据。</p></section>
-          <section class="io-section out-card"><header class="io-card-head"><h3>输出 / OUTPUT</h3><span class="io-status">设备未提供原始字节</span></header><p>不从摘要推测输出内容或字节数。设备保存的字段仍可在「事件信息」和「摘要 JSON」中查看。</p></section>
-        </div>
+        <template v-if="hasIO">
+          <div class="io-panels">
+            <section class="io-section in-card">
+              <header class="io-card-head"><h3>输入 / INPUT</h3><span class="io-status mono">{{ event.inLen != null ? event.inLen + ' B' : '—' }}</span></header>
+              <pre v-if="event.inputHex" class="io-hex mono">{{ spacedHex(event.inputHex) }}<span v-if="inTrunc" class="io-trunc">
+… 前缀 32 B / 共 {{ event.inLen }} B</span></pre>
+              <p v-if="event.preview" class="io-text">{{ event.preview }}</p>
+              <p v-if="!event.inputHex && !event.preview" class="io-empty">该事件无输入数据</p>
+            </section>
+            <section class="io-section out-card">
+              <header class="io-card-head"><h3>输出 / OUTPUT</h3><span class="io-status mono">{{ event.outLen != null ? event.outLen + ' B' : '—' }}</span></header>
+              <pre v-if="event.outputHex" class="io-hex mono">{{ spacedHex(event.outputHex) }}<span v-if="outTrunc" class="io-trunc">
+… 前缀 32 B / 共 {{ event.outLen }} B</span></pre>
+              <p v-if="!event.outputHex" class="io-empty">该事件无输出数据</p>
+            </section>
+          </div>
+        </template>
+        <p v-else class="io-empty">该摘要不含输入输出内容（旧格式记录或事件本身无数据载荷）。</p>
+        <section class="data-card"><header class="data-card-head">事件信息</header>
+          <div v-for="[k, v] in kv(eventRows)" :key="k" class="kv-row"><span class="key">{{ k }}</span><span class="val mono">{{ v }}</span></div></section>
         <section class="byte-preview" aria-labelledby="bytePreviewHeading">
           <div class="byte-header"><div><h3 id="bytePreviewHeading">本地字节预览</h3><p class="byte-help">仅验证你选择的文件；不上传、不保存，也不归入这条设备事件。</p></div>
             <div class="hstack"><button class="btn sm" type="button" @click="fileEl?.click()">载入本地文件</button>
@@ -143,26 +184,7 @@ const json = (x: unknown) => JSON.stringify(x, null, 2);
             <div v-for="[k, v] in kv(sourceRows)" :key="k" class="kv-row"><span class="key">{{ k }}</span><span class="val mono">{{ v ?? '—' }}</span></div></section>
         </div>
       </template>
-      <!-- 事件信息 -->
-      <template v-else>
-        <h3 class="content-title">事件摘要</h3>
-        <div class="metric-grid">
-          <div class="metric"><div class="metric-label">会话序号</div><div class="metric-value">#{{ event.seq }}</div></div>
-          <div class="metric"><div class="metric-label">原记录序号</div><div class="metric-value">#{{ event.sourceSeq ?? '—' }}</div></div>
-          <div class="metric"><div class="metric-label">阶段</div><div class="metric-value">{{ getPhase(event.phase) }}</div></div>
-          <div class="metric"><div class="metric-label">事件时间</div><div class="metric-value">{{ fmt(shortTime, event.timeMs) }}</div></div>
-        </div>
-        <div class="box-grid">
-          <section class="data-card"><header class="data-card-head">基本信息</header>
-            <div v-for="[k, v] in kv(eventRows)" :key="k" class="kv-row"><span class="key">{{ k }}</span><span class="val mono">{{ v ?? '—' }}</span></div></section>
-          <section class="data-card"><header class="data-card-head">会话与来源</header>
-            <div v-for="[k, v] in kv(sourceRows)" :key="k" class="kv-row"><span class="key">{{ k }}</span><span class="val mono">{{ v ?? '—' }}</span></div></section>
-        </div>
-        <h3 class="content-title">关联信息</h3>
-        <div class="kv-table">
-          <div v-for="[k, v] in kv(contextRows)" :key="k" class="kv-row"><span class="key">{{ k }}</span><span class="val mono">{{ v ?? '—' }}</span></div>
-        </div>
-      </template>
+
     </div></div>
   </template>
 </template>

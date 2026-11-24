@@ -3,8 +3,8 @@ import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue';
 import { store, displayState, refresh, saveLocal, toast, downloadText } from '../store';
 import { I } from '../icons';
 import {
-  CATEGORIES, PHASES, getCategory, getPhase, titleFor, shortTime, longTime, fmt,
-  cleanEvent,
+  CATEGORIES, PHASES, getCategory, getPhase, titleFor, sizeLabel, shortTime, longTime, fmt,
+  cleanEvent, type EventItem,
 } from '../model';
 import EventDetail from './EventDetail.vue';
 
@@ -45,7 +45,8 @@ const filtered = computed(() => {
     (!hideUpdates.value || !e.update) &&
     (phase.value === 'all' || phase.value === e.phase) &&
     (!query || ['#' + e.seq, e.sourceSeq, getCategory(e.category), getPhase(e.phase), e.phase,
-      e.kind, e.callId, e.parentCallId, e.asyncTaskId, fmt(longTime, e.timeMs)]
+      e.kind, e.callId, e.parentCallId, e.asyncTaskId, e.algorithm, e.operation, e.detail, e.preview,
+      e.inputHex, e.outputHex, fmt(longTime, e.timeMs)]
       .some((v) => String(v ?? '').toLowerCase().includes(query))))
     .sort((a, b) => (sort.value === 'asc' ? 1 : -1) * ((a.timeMs - b.timeMs) || (a.seq - b.seq)));
 });
@@ -65,6 +66,9 @@ const footerMode = computed(() =>
   paused.value ? '本板块已暂停' : cleared.value ? '本板块显示已清空'
     : store.session?.status === 'ended' ? '历史会话 · 只读'
       : store.network === 'online' ? (store.session ? '设备会话' : '暂无会话') : '正在连接');
+
+/** 行内预览：有内容预览用预览（输入 utf8/hex），否则用详情（文件路径、请求行等） */
+const previewFor = (e: EventItem) => e.preview || e.detail || '';
 
 function select(seq: number) {
   if (!shown.value.some(e => e.seq === seq)) return;
@@ -236,7 +240,9 @@ onUnmounted(() => { document.removeEventListener('click', onDocClick); document.
                 <time class="event-time">{{ fmt(shortTime, e.timeMs) }}</time></span>
               <span class="event-sub"><span class="pill phase" :class="{ aborted: e.phase === 'aborted' }">{{ getPhase(e.phase) }}</span>
                 <span v-if="e.update" class="pill">更新</span>
+                <span v-if="sizeLabel(e)" class="event-io">{{ sizeLabel(e) }}</span>
                 <span class="event-source">{{ e.callId ? '关联 ' + e.callId : '原记录 #' + (e.sourceSeq ?? '—') }}</span></span>
+              <span v-if="previewFor(e)" class="event-preview">{{ previewFor(e) }}</span>
             </span>
           </button>
           <button v-if="shown.length < filtered.length" type="button" class="btn sm load-more"

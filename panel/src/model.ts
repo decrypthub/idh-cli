@@ -13,7 +13,9 @@ export interface DeviceApp extends InstalledApp { processGeneration?: string; pi
 export interface DeviceInfo { service?: string; version?: string; apps: DeviceApp[]; [k: string]: unknown }
 export interface EventItem {
   seq: number; appSeq?: number; sourceSeq?: number; timeMs: number; category: number; kind?: string;
-  phase?: string; update?: boolean; callId?: string; parentCallId?: string; asyncTaskId?: string; [k: string]: unknown;
+  phase?: string; update?: boolean; callId?: string; parentCallId?: string; asyncTaskId?: string;
+  algorithm?: string; operation?: string; detail?: string; preview?: string;
+  inputHex?: string; outputHex?: string; inLen?: number; outLen?: number; [k: string]: unknown;
 }
 /** 归并后的应用条目：sessionId 复用为 bundleId，count 跨会话累计。 */
 export interface AppRecord extends DeviceSession { sessions: number; name: string; running: boolean; kind: "record" }
@@ -21,7 +23,30 @@ export interface DeviceRow { id: string; address: string; transport?: string; on
 
 export const getCategory = (n?: number) => CATEGORY_LABELS[n ?? -1] ?? "其他";
 export const getPhase = (p?: string) => (p ? PHASES[p] ?? "摘要" : "摘要");
-export const titleFor = (e: EventItem) => getCategory(e.category) + "事件";
+
+// 标题优先用真实算法名；无算法字段（旧记录）按类别给具体动作名，不写「XX 事件」这种空标签
+const TITLE_FALLBACK: Record<string, string> = {
+  digest: "摘要计算", hmac: "HMAC 校验", sym: "对称加解密", asym: "非对称运算",
+  file: "文件读写", sys: "系统调用", net: "网络请求", keychain: "Keychain 存取", other: "观测记录",
+};
+const OPS: Array<[RegExp, string]> = [
+  [/encrypt/i, "加密"], [/decrypt/i, "解密"], [/sign/i, "签名"], [/verify/i, "验签"],
+  [/digest|mac/i, "摘要"], [/derive|kdf/i, "派生"],
+];
+/** 操作名中文化，保留括号里的有效信息：verify (ok) → 验签 · ok，derive (rounds=N) → 派生 · rounds=N */
+export const operationLabel = (op?: string) => {
+  if (!op) return "";
+  const extra = op.match(/\(([^)]*)\)/)?.[1];
+  const base = OPS.find(([re]) => re.test(op))?.[1] ?? op.replace(/\s*\(.*\)/, "").trim();
+  return extra ? base + " · " + extra : base;
+};
+export const titleFor = (e: EventItem) => {
+  if (e.algorithm) return e.operation ? e.algorithm + " · " + operationLabel(e.operation) : e.algorithm;
+  return TITLE_FALLBACK[CATEGORIES[e.category] ?? "other"];
+};
+/** 列表/详情里的字节数：'128 B → 64 B'，仅单侧有值也给单侧 */
+export const sizeLabel = (e: EventItem) =>
+  e.inLen == null && e.outLen == null ? "" : `${e.inLen ?? 0} B → ${e.outLen ?? 0} B`;
 
 export const DISPLAY_CHOICES = [100, 150, 300, 500];
 export const LIMITS: Record<string, [number, number]> = {
@@ -113,7 +138,9 @@ export function portableProfile(device: DeviceLimits, panel: PanelPrefs): string
   return JSON.stringify({ version: 1, deviceSession: deviceLimits(device, true), panel: mergePanel(defaults(), panel as unknown as Record<string, unknown>) }, null, 2);
 }
 
-const FIELD_NAMES = ["seq", "sourceSeq", "timeMs", "category", "kind", "phase", "update", "callId", "parentCallId", "asyncTaskId"];
+const FIELD_NAMES = ["seq", "sourceSeq", "timeMs", "category", "kind", "phase", "update",
+  "callId", "parentCallId", "asyncTaskId", "algorithm", "operation", "detail", "preview",
+  "inputHex", "outputHex", "inLen", "outLen"];
 export const cleanEvent = (e: EventItem) =>
   Object.fromEntries(FIELD_NAMES.filter((k) => Object.hasOwn(e, k)).map((k) => [k, e[k]]));
 
