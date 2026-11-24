@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useAppearance } from './appearance';
+useAppearance();
 import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { store, toasts, refresh, loadDevices, saveLocal } from './store';
 import { I } from './icons';
@@ -87,14 +89,14 @@ onUnmounted(() => clearInterval(poll));
       </div>
       <nav class="side-nav">
         <div class="side-group">观测</div>
-        <button v-for="item in NAV" :key="item.key" class="side-item" :title="item.label"
+        <button v-for="item in NAV" :key="item.key" class="side-item" :title="item.label" :aria-current="store.tab === item.key ? 'page' : undefined"
           :class="{ active: store.tab === item.key }" @click="store.tab = item.key">
           <svg class="side-icon" viewBox="0 0 20 20" v-html="item.icon" />
           <span class="side-label">{{ item.label }}</span>
           <span class="side-n">{{ counts[item.key] || '' }}</span>
         </button>
         <div class="side-group">工具</div>
-        <button v-for="item in TOOLS" :key="item.key" class="side-item" :title="item.label"
+        <button v-for="item in TOOLS" :key="item.key" class="side-item" :title="item.label" :aria-current="store.tab === item.key ? 'page' : undefined"
           :class="{ active: store.tab === item.key }" @click="store.tab = item.key">
           <svg class="side-icon" viewBox="0 0 20 20" v-html="item.icon" />
           <span class="side-label">{{ item.label }}</span>
@@ -115,10 +117,11 @@ onUnmounted(() => clearInterval(poll));
 
     <div class="main-col">
       <header class="topbar">
-        <div class="stats">
+        <select class="mobile-board" aria-label="切换板块" v-model="store.tab"><option v-for="item in [...NAV, ...TOOLS]" :key="item.key" :value="item.key">{{ item.label }}</option><option value="settings">设置</option></select>
+        <div class="stats" :title="store.device?.version ? '会话协议 ' + store.device.version : undefined">
           <span :class="netCls"></span>
           <span>{{ netText }}</span>
-          <span v-if="store.device?.version" class="protocol">会话协议 {{ store.device.version }}</span>
+          
         </div>
         <DeviceMenu />
         <div class="header-actions">

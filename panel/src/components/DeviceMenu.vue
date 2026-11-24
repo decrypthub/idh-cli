@@ -39,7 +39,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick));
 </script>
 
 <template>
-  <section class="device-picker">
+  <section class="device-picker" @keydown.esc.stop="open = false; ($event.currentTarget as HTMLElement).querySelector('button')?.focus()">
     <button type="button" class="device-context" :aria-expanded="open" title="切换设备"
       @click.stop="open = !open; if (open) void loadDevices()">
       <span class="context-label">设备</span>

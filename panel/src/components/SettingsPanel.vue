@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { appearance, setAppearance, type Appearance } from '../appearance';
 import { computed, reactive, ref, onMounted, watch } from 'vue';
 import { store, savePrefs, copyText, downloadText } from '../store';
 import {
@@ -10,7 +11,7 @@ import {
 import { getSettingsExport, postSettingsImport } from '../api';
 
 const PAGES: Array<[string, string]> = [
-  ['capture', '捕获'], ['log', '日志'], ['noise', '噪声'], ['spoof', '伪装'],
+  ['capture', '捕获'], ['display', '显示'], ['log', '日志'], ['noise', '噪声'], ['spoof', '伪装'],
   ['bypass', '绕过'], ['data', '数据'], ['rawcfg', '配置 JSON'],
 ];
 const page = ref(store.settingsPage || 'capture');
@@ -146,14 +147,18 @@ void CATEGORIES; void getCategory; void getPhase; void fmt; void longTime;
     <section class="settings-main">
       <div class="settings-body">
         <template v-if="page === 'capture'">
-          <section class="settings-group"><h3>摘要类别</h3>
+          <section class="settings-group"><h3>摘要类别</h3><p class="muted">只影响列表显示，不改变设备采集。</p>
             <label v-for="{ key, label } in SUMMARY_KINDS" :key="key" class="field">
-              <span>{{ label }}<small>只影响列表显示，不改变设备采集</small></span>
+              <span>{{ label }}</span>
               <input class="switch" type="checkbox" v-model="sheet.panel.summaryCategories[key]" :disabled="sheet.busy" />
             </label></section>
         </template>
+        <template v-else-if="page === 'display'"><section class="settings-group"><h3>电脑面板</h3><label class="appearance-row"><span>外观</span><select aria-label="外观" :value="appearance" @change="setAppearance(($event.target as HTMLSelectElement).value as Appearance)">
+              <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
+            </select></label></section></template>
         <template v-else-if="page === 'log'">
           <section class="settings-group"><h3>电脑面板</h3>
+            
             <label class="field"><span>每次展示条数<small>可以继续加载其余摘要</small></span>
               <select v-model.number="sheet.panel.displayCap" :disabled="sheet.busy">
                 <option v-for="v in DISPLAY_CHOICES" :key="v" :value="v">{{ v }} 行</option></select></label>
@@ -204,7 +209,7 @@ void CATEGORIES; void getCategory; void getPhase; void fmt; void longTime;
           <p class="helper">{{ noiseText[page] }}</p>
         </template>
       </div>
-      <footer class="settings-foot">
+      <footer v-if="page !== 'display'" class="settings-foot">
         <span class="dirty-status" :class="rawHintCls || (dirty ? 'warn' : '')">{{ rawHint || saveText }}</span>
         <button class="btn" type="button" :disabled="sheet.busy || !dirty" @click="save">保存</button>
       </footer>

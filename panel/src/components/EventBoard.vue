@@ -169,6 +169,7 @@ onUnmounted(() => { document.removeEventListener('click', onDocClick); document.
 
 <template>
   <div class="board-wrap">
+    <h1 class="board-heading">{{ ({ crypto:'加解密',sys:'系统',net:'网络',keychain:'Keychain',other:'其他' } as Record<string,string>)[store.tab] }}</h1>
     <div class="toolbar">
       <div class="toolbar-group toolbar-left">
         <label class="search-wrap">
@@ -209,14 +210,16 @@ onUnmounted(() => { document.removeEventListener('click', onDocClick); document.
       </div>
       <div class="toolbar-group toolbar-right">
         <span class="toolbar-stat"><strong>{{ filtered.length }}</strong> / {{ store.events.length }} 条</span>
-        <button class="btn sm" type="button" :aria-pressed="hideUpdates"
-          title="只影响当前列表，不修改设备记录" @click="hideUpdates = !hideUpdates">{{ hideUpdates ? '显示更新' : '隐藏更新' }}</button>
         <button class="btn sm" type="button" :disabled="!store.session" :aria-pressed="paused" @click="togglePause">
-          <svg class="ico sm" viewBox="0 0 20 20" v-html="paused ? I.play : I.pause" />{{ paused ? '继续本板块' : '暂停本板块' }}</button>
+          <svg class="ico sm" viewBox="0 0 20 20" v-html="paused ? I.play : I.pause" />{{ paused ? '继续刷新' : '暂停刷新' }}</button>
         <div class="anchor">
           <button class="btn icon-only" type="button" aria-label="更多操作" :aria-expanded="menu === 'more'" @click="toggleMenu('more')">
             <svg class="ico" viewBox="0 0 20 20" v-html="I.more" /></button>
           <div class="dropdown right" :hidden="menu !== 'more'">
+<button class="dropdown-item" type="button" :aria-pressed="compact" @click="compact = !compact; persistView(); menu = ''">{{ compact ? '使用标准行距' : '使用紧凑行距' }}</button>
+        <button class="dropdown-item" type="button" :aria-pressed="hideUpdates"
+          title="只影响当前列表，不修改设备记录" @click="hideUpdates = !hideUpdates; menu = ''">{{ hideUpdates ? '显示更新' : '隐藏更新' }}</button>
+
             <button class="dropdown-item" type="button" :disabled="!store.session" @click="exportEvents('board')">下载当前板块</button>
             <button class="dropdown-item" type="button" :disabled="!store.session" @click="exportEvents('filtered')">导出当前筛选结果</button>
             <button class="dropdown-item" type="button" :disabled="!store.session" @click="exportEvents('session')">下载完整应用记录</button>
@@ -234,16 +237,9 @@ onUnmounted(() => { document.removeEventListener('click', onDocClick); document.
       </div>
     </div>
 
-    <div ref="workarea" class="workarea">
+    <div ref="workarea" class="workarea" :class="{ reading: store.seq !== null, 'no-results': !shown.length && !store.seq }">
       <aside class="events-panel" :style="{ width: width + 'px' }" aria-label="事件记录">
-        <div class="events-header"><strong>事件记录</strong>
-          <div class="hstack">
-            <span class="small-stat">{{ shown.length === filtered.length ? shown.length + ' 条' : shown.length + ' / ' + filtered.length + ' 条' }}</span>
-            <button class="btn sm icon-only ghost" type="button" aria-label="切换列表密度" :aria-pressed="compact"
-              title="切换列表密度" @click="compact = !compact; persistView()">
-              <svg class="ico sm" viewBox="0 0 20 20" v-html="I.list" /></button>
-          </div>
-        </div>
+        <div v-if="store.seq === null && shown.length" class="ledger-head idh-grid" aria-hidden="true"><span>序号</span><span>事件</span><span>内容预览</span><span>阶段 / 大小</span><span>时间</span></div>
         <div class="event-list" :class="{ compact }" tabindex="0" aria-label="事件列表">
           <button v-for="e in shown" :key="e.seq" class="event-row row" :class="['cat-' + (CATEGORIES[e.category] ?? 'other'), { selected: e.seq === store.seq }]"
             type="button" :data-seq="e.seq" :aria-pressed="e.seq === store.seq" @click="select(e.seq)">
@@ -254,7 +250,7 @@ onUnmounted(() => { document.removeEventListener('click', onDocClick); document.
               <span class="event-sub"><span class="pill phase" :class="{ aborted: e.phase === 'aborted' }">{{ getPhase(e.phase) }}</span>
                 <span v-if="e.update" class="pill">更新</span>
                 <span v-if="sizeLabel(e)" class="event-io">{{ sizeLabel(e) }}</span>
-                <span class="event-source">{{ e.callId ? '关联 ' + e.callId : '原记录 #' + (e.sourceSeq ?? '—') }}</span></span>
+                <span v-if="e.callId || e.sourceSeq != null" class="event-source">{{ e.callId ? '关联 ' + e.callId : '原记录 #' + (e.sourceSeq ?? '—') }}</span></span>
               <span v-if="previewFor(e)" class="event-preview">{{ previewFor(e) }}</span>
             </span>
           </button>
@@ -274,7 +270,7 @@ onUnmounted(() => { document.removeEventListener('click', onDocClick); document.
       <div ref="splitterEl" class="splitter" tabindex="0" role="separator" aria-label="调整事件列表宽度"
         aria-orientation="vertical" @pointerdown="splitDown" @pointermove="splitMove" @lostpointercapture="splitUp"
         @keydown="splitKey"></div>
-      <main class="detail-pane" aria-label="事件详情"><EventDetail /></main>
+      <main class="detail-pane" aria-label="事件详情"><button v-if="store.seq !== null" type="button" class="mobile-return" @click="store.seq = null">‹ 返回列表</button><EventDetail /></main>
     </div>
 
     <div v-if="clearConfirm" class="modal-mask show" @click.self="clearConfirm = false">
