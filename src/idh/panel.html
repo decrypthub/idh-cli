@@ -123,7 +123,7 @@
   .app-state { flex:none; color:var(--muted); font-size:10px }
   .app-state.on { color:var(--green) }
   .app-empty { padding:10px 12px; color:var(--muted); font-size:12px }
-  .app-dialog-foot { max-height:132px; overflow:auto; border-top:1px solid var(--line-soft) }
+  .app-dialog-foot { padding:8px 16px 10px; border-top:1px solid var(--line-soft); font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
   .proc-details { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 12px; margin:0; padding:4px 10px 10px; font-size:11.5px }
   .proc-details dt { color:var(--muted) }
   .proc-details dd { margin:0; overflow-wrap:anywhere }
@@ -457,7 +457,7 @@
   </div>
   <input class='app-search' id='appSearch' type='search' placeholder='搜索应用' aria-label='搜索应用' autocomplete='off'>
   <div class='app-choices' id='appChoices' role='listbox' aria-label='应用'></div>
-  <div class='app-dialog-foot'><dl class='proc-details' id='procinfo'></dl></div>
+  <div class='app-dialog-foot' id='procinfo'></div>
 </dialog>
 <dialog class='diagnostic-dialog' id='diagMask' aria-labelledby='diagHeading'>
   <div class='dialog-head'>
@@ -695,6 +695,7 @@
     setMenu("");
     paintAppDialog();
     $("appDialog").showModal();
+    $("appChoices").scrollTop=0;
     $("appSearch").focus();
     loadInject().then(paintAppDialog);
   });
@@ -794,13 +795,11 @@
     const stale=state.network==="offline";
     const label=active?(stale?"上次登记为在线":"在线，已登记"):
       session?.status==="ended"?"历史会话，未见对应进程在线":session?"未见登记":"无在线进程";
-    const pairs=[["状态",label],
-      ["App",active?.bundleId??session?.bundleId??"—"],
-      [active?"当前 PID":"会话 PID",active?.pid??session?.pid??"—"],
-      ["进程代",active?.processGeneration??session?.processGeneration??"—"]];
-    if(session)pairs.push(["会话数",String(session.sessions??1)],["最新会话",session.sessionId],
-      ["已提交",String(session.count)+" 条"],["最新序号",session.lastSeq??"—"]);
-    $("procinfo").innerHTML=pairs.map(([label,value])=>'<dt>'+esc(label)+'</dt><dd class="mono">'+esc(value)+'</dd>').join("");
+    const foot=[label,
+      "PID "+(active?.pid??session?.pid??"—"),
+      session?String(session.sessions??1)+" 个会话":null,
+      session?String(session.count)+" 条":null].filter(Boolean).join(" · ");
+    $("procinfo").textContent=foot;
     $("dumpApp").textContent=session?.bundleId??"无当前应用";
   }
   function renderIndicators() {
