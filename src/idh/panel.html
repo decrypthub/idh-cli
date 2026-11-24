@@ -701,6 +701,13 @@
     loadInject().then(paintAppDialog);
   });
   $("appDialogClose").addEventListener("click",()=>$("appDialog").close());
+  // 模态框统一行为：点遮罩关闭（Escape 由原生 dialog 处理）
+  for(const dlg of document.querySelectorAll("dialog")){
+    dlg.addEventListener("click",(event)=>{
+      const r=dlg.getBoundingClientRect();
+      if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dlg.close();
+    });
+  }
   $("appSearch").addEventListener("input",paintAppDialog);
   $("appChoices").addEventListener("change",(event)=>{
     const box=event.target.closest("[data-inject]");
