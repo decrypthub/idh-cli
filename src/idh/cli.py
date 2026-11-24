@@ -90,11 +90,11 @@ def _pick_usb_endpoint(udid: str | None = None) -> AppEndpoint:
     return usb_endpoint(matches[0]["udid"])
 
 
-def _probed_endpoints(endpoints: Sequence[AppEndpoint]) -> list[AppEndpoint]:
+def _probed_endpoints(endpoints: Sequence[AppEndpoint], *, timeout: float = 1.0) -> list[AppEndpoint]:
     if not endpoints:
         return []
     with ThreadPoolExecutor(max_workers=min(8, len(endpoints))) as pool:
-        return list(pool.map(probe_endpoint, (resolve_endpoint(e) for e in endpoints)))
+        return list(pool.map(lambda e: probe_endpoint(resolve_endpoint(e), timeout=timeout), endpoints))
 
 
 def _endpoint_label(endpoint: AppEndpoint) -> str:
@@ -847,7 +847,12 @@ def _run_panel(args: argparse.Namespace) -> int:
     try:
         endpoint = _resolve_device(endpoints, None, command="panel")
     except SystemExit:
-        endpoint = None  # 零设备启动：面板照常起，由页面里的设备入口添加
+        # 多设备在线不报错退出：取第一台在线设备，页面里可切换
+        endpoint = next(
+            (e for e in _probed_endpoints(endpoints)
+             if e.kind == "device" and e.properties.get("status") == "online"),
+            None,
+        )  # 零设备时为 None：面板照常起，由页面里的设备入口添加
     if endpoint is not None and endpoint.kind != "device":
         print("idh: panel serves a device connection", file=sys.stderr)
         return 2
@@ -868,10 +873,17 @@ def _run_panel(args: argparse.Namespace) -> int:
                 break
     current = {"endpoint": endpoint}
 
+    def device_pool() -> list[AppEndpoint]:
+        merged = {e.mcp_url.casefold(): e for e in endpoints}
+        for entry in load_saved_endpoints():
+            if entry.kind == "device":
+                merged[entry.mcp_url.casefold()] = entry
+        return list(merged.values())
+
     def device_records() -> dict:
-        saved = [item for item in load_saved_endpoints() if item.kind == "device"]
-        probed = _probed_endpoints(saved)
-        selected = current["endpoint"].mcp_url
+        saved = device_pool()
+        probed = [item for item in _probed_endpoints(saved, timeout=3.0) if item.kind != "app"]
+        selected = current["endpoint"].mcp_url if current["endpoint"] else ""
         return {
             "devices": [
                 {
@@ -974,10 +986,11 @@ def _run_panel(args: argparse.Namespace) -> int:
                 return
             target = str(request.get("id") or "")
             if action == "select":
-                for saved in load_saved_endpoints():
-                    if saved.kind == "device" and saved.mcp_url.casefold() == target.casefold():
-                        save_selected(saved.mcp_url)
-                        current["endpoint"] = saved
+                for entry in device_pool():
+                    if entry.mcp_url.casefold() == target.casefold():
+                        if any(e.mcp_url.casefold() == target.casefold() for e in load_saved_endpoints()):
+                            save_selected(entry.mcp_url)
+                        current["endpoint"] = entry
                         self.write_json(200, device_records())
                         return
                 self.write_json(404, {"error": "unknown_device"})
@@ -1049,7 +1062,7 @@ def _run_panel(args: argparse.Namespace) -> int:
                     self.write_json(400, {"error": "invalid_bundle_id"})
                     return
             else:
-                ids = [request.get(key) for key in ("add", "remove")]
+                ids = [request.get(key, []) for key in ("add", "remove")]
                 if any(not isinstance(value, list) or len(value) > 256 or
                        any(not _BUNDLE_ID.fullmatch(str(item)) for item in value)
                        for value in ids):

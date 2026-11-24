@@ -635,7 +635,7 @@
     if(currentMenu && !e.target.closest("#"+currentMenu+",#"+menus[currentMenu])) setMenu("");
   });
   // 应用选择对话框：记录 App 在前，已安装无记录的 App 列在后（对齐 ADH 应用选择器）
-  let appCatalog = {apps:[], installed:[], selected:""};
+  let appCatalog = {apps:[], installed:[], selected:""}, lastRowsHtml="";
   function appRows(query) {
     const q=(query||"").trim().toLowerCase();
     const match=a=>!q||(a.bundleId+" "+(a.name||"")).toLowerCase().includes(q);
@@ -655,7 +655,8 @@
       (injectPending.has(a.bundleId)?'<button class="btn sm app-mini" type="button" data-relaunch="'+esc(a.bundleId)+'">重启生效</button>':"")+'</div>';
     const recorded=appCatalog.apps.filter(match);
     const recordedIds=new Set(recorded.map(a=>a.bundleId));
-    const installed=appCatalog.installed.filter(a=>!recordedIds.has(a.bundleId)&&match(a));
+    const installed=appCatalog.installed.filter(a=>!recordedIds.has(a.bundleId)&&match(a))
+      .sort((a,b)=>(injectable(a)?0:1)-(injectable(b)?0:1)||String(a.name||a.bundleId).localeCompare(String(b.name||b.bundleId),"zh-Hans-CN"));
     return (recorded.length?'<div class="app-group">记录</div>'+recorded.map(row).join(""):"")+
       (installed.length?'<div class="app-group">已安装</div>'+installed.map(row).join(""):"")||
       '<p class="app-empty">没有可读取的应用</p>';
@@ -677,7 +678,8 @@
       ? (info.running?"运行中":sessionStatus[info.status]||"会话")+" · "+info.count+" 条 · "+fmt(longTime,info.createdAtMs)
       : appCatalog.selected?"没有此应用的记录":"";
     const query=$("appSearch").value;
-    $("appChoices").innerHTML=appRows(query);
+    const html=appRows(query);
+    if(html!==lastRowsHtml){$("appChoices").innerHTML=html;lastRowsHtml=html;}
   }
   function sessionOptions(sessions,selected,installed) {
     appCatalog={apps:sessions,installed:installed||[],selected};
@@ -697,7 +699,7 @@
     loadInject().then(paintAppDialog);
   });
   $("appDialogClose").addEventListener("click",()=>$("appDialog").close());
-  $("appSearch").addEventListener("input",()=>{$("appChoices").innerHTML=appRows($("appSearch").value);});
+  $("appSearch").addEventListener("input",paintAppDialog);
   $("appChoices").addEventListener("change",(event)=>{
     const box=event.target.closest("[data-inject]");
     if(box)void toggleScope(box.dataset.inject,box.checked).then(paintAppDialog);
@@ -812,6 +814,7 @@
     const boardDisplay=displayState(), paused=boardDisplay.pauseAt!==null, cleared=boardDisplay.clearThrough!==null;
     $("footerMode").textContent=paused?"本板块已暂停":cleared?"本板块显示已清空":mode==="ended"?"历史会话 · 只读":
       mode?(sessionStatus[mode]||"设备会话"):online?"暂无会话":"正在连接";
+    paintDeviceChip();
     $("footerDot").className="status-dot"+(paused||cleared?" warn":mode==="observing"?" ok":"");
     $("footerSort").textContent=state.sort==="asc"?"按时间正序":"按时间倒序";
     $("count").innerHTML='<strong>'+currentFiltered.length+'</strong> / '+state.events.length+' 条';
@@ -1370,20 +1373,27 @@
   let deviceRows=[],usbRows=[];
   function renderDevices() {
     const saved=deviceRows.map((d)=>{
-      const sub=(d.transport==="usb"?"USB · ":"")+(d.online?"在线":"离线");
+      const online=d.selected?state.network==="online":d.online;
+      const sub=(d.transport==="usb"?"USB":"LAN")+" · "+(online?"在线":"离线");
       return '<button class="dropdown-item" type="button" role="option" aria-selected="'+d.selected+'" data-device="'+esc(d.id)+'"><span><strong>'+esc(d.address)+'</strong><span class="dropdown-sub">'+sub+'</span></span>'+(d.selected?icon("check",true):"")+'<span class="device-remove" role="button" tabindex="-1" title="移除" data-remove="'+esc(d.id)+'">×</span></button>';
     });
     const usb=usbRows.map((udid)=>'<button class="dropdown-item" type="button" role="option" data-usb="'+esc(udid)+'"><span><strong>USB 设备</strong><span class="dropdown-sub">'+esc(udid)+'</span></span></button>');
     $("idh-devices").innerHTML=(saved.length||usb.length)?saved.concat(usb).join(""):'<p class="dropdown-head">没有已保存的设备</p>';
+    paintDeviceChip();
+  }
+  // 选中设备的在线态以会话请求的实际连通为准，菜单里的探测标记只做行内展示
+  function paintDeviceChip() {
     const current=deviceRows.find((d)=>d.selected);
     $("deviceTitle").textContent=current?current.address:"未连接";
-    $("deviceLink").textContent=current?((current.transport==="usb"?"USB":"LAN")+" · "+(current.online?"在线":"离线")):"";
+    $("deviceLink").textContent=current?((current.transport==="usb"?"USB":"LAN")+" · "+
+      (state.network==="online"?"在线":state.network==="offline"?"离线":"连接中")):"";
   }
   async function loadDevices() {
     try{const data=await (await fetch("/api/devices")).json();deviceRows=data.devices||[];usbRows=data.usb||[];}catch{deviceRows=[];usbRows=[];}
     renderDevices();
   }
   $("deviceBtn").addEventListener("click",loadDevices);
+  loadDevices();
   $("idh-devices").addEventListener("click",async(event)=>{
     const remove=event.target.closest("[data-remove]");
     if(remove){event.stopPropagation();await post({action:"remove",id:remove.dataset.remove});loadDevices();return;}
@@ -1405,7 +1415,7 @@
   });
   $("deviceAddr").addEventListener("keydown",(event)=>{if(event.key==="Enter")$("deviceAddBtn").click();});
 
-  let injectData=null, injectAt=0, injectPending=new Set();
+  let injectData=null, injectAt=0, injectPending=new Set(), lastInjectHtml="";
   function injectRow(app,scope) {
     const inScope=scope.includes(app.bundleId), sys=app.kind==="system"||app.bundleId.startsWith("com.apple.");
     const pending=injectPending.has(app.bundleId);
@@ -1420,8 +1430,14 @@
     if(injectData.error){$("injectError").hidden=false;$("injectError").textContent="注入范围读取失败："+injectData.error;$("injectRows").innerHTML="";return;}
     $("injectError").hidden=true;
     const q=($("injectQ").value||"").trim().toLowerCase(), scope=injectData.scope||[];
-    const apps=(injectData.apps||[]).filter((a)=>!q||(a.name+" "+a.bundleId).toLowerCase().includes(q));
-    $("injectRows").innerHTML=apps.length?apps.map((a)=>injectRow(a,scope)).join(""):'<tr><td colspan="4" class="tool-note">没有匹配的应用</td></tr>';
+    const apps=(injectData.apps||[]).filter((a)=>!q||(a.name+" "+a.bundleId).toLowerCase().includes(q))
+      .sort((a,b)=>{
+        const sa=a.kind==="system"||a.bundleId.startsWith("com.apple.")?1:0;
+        const sb=b.kind==="system"||b.bundleId.startsWith("com.apple.")?1:0;
+        return sa-sb||String(a.name).localeCompare(String(b.name),"zh-Hans-CN");
+      });
+    const html=apps.length?apps.map((a)=>injectRow(a,scope)).join(""):'<tr><td colspan="4" class="tool-note">没有匹配的应用</td></tr>';
+    if(html!==lastInjectHtml){$("injectRows").innerHTML=html;lastInjectHtml=html;}
   }
   async function loadInject(force) {
     if(!force && Date.now()-injectAt<3000)return;
