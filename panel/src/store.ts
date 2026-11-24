@@ -42,6 +42,10 @@ export const store = reactive({
   session: null as (DeviceSession & { sessions?: number }) | null,
   events: [] as EventItem[],
   sessionNotice: '',
+  // 已加载窗口之外设备上还有更早记录
+  hasOlder: false,
+  eventTotal: 0,
+  loadingOlder: false,
   // 板块与展示
   tab: 'crypto',
   displayByBoard: new Map<string, BoardDisplay>(),
@@ -155,7 +159,10 @@ export function changeSelection(id: string) {
   if (id === store.selected) return;
   const had = !!store.selected;
   store.selected = id;
-  loaded = null;
+  eventWindow = null;
+  store.hasOlder = false;
+  store.eventTotal = 0;
+  store.loadingOlder = false;
   store.displayByBoard.clear();
   store.seq = null;
   store.detailTab = 'data';
@@ -163,50 +170,107 @@ export function changeSelection(id: string) {
   if (had) void refresh(true);
 }
 
-// ---- 按 App 读连续时间线：appSeq 翻页 → 归一为 seq ----
-async function readEvents(bundleId: string, expected: number): Promise<EventItem[]> {
-  const result: EventItem[] = [];
-  const path = '/api/apps/' + encodeURIComponent(bundleId) + '/events';
-  let cursor = 0;
-  for (let index = 0; result.length < expected && index < 80; ++index) {
-    const page = await A.getAppEvents(bundleId, cursor);
-    if ((page as { __status?: number }).__status) throw new Error('设备摘要暂时无法读取');
-    for (const event of page.events ?? []) {
-      const seq = event.appSeq ?? event.seq;
-      if (seq <= cursor) throw new Error('设备摘要序号重复或倒退');
-      result.push({ ...event, seq, appSeq: seq });
-      cursor = seq;
-    }
-    if (!page.hasMore) break;
-  }
-  void path;
-  if (result.length !== expected) throw new Error('已保存摘要与应用快照不一致，请刷新');
-  return result.reverse();
+// ---- 按 App 读时间线：默认只取设备最新一页；向前翻页由「加载更早」手动触发 ----
+const EVENT_PAGE = 200;
+interface EventWindow {
+  bundle: string;
+  events: EventItem[];   // appSeq 升序
+  oldestSeq: number;
+  hasOlder: boolean;
+  total: number;         // 设备侧该应用保存总数（summary.count）
+}
+let eventWindow: EventWindow | null = null;
+let windowGen = 0;
+
+const normEvent = (e: EventItem): EventItem => {
+  const seq = e.appSeq ?? e.seq;
+  return { ...e, seq, appSeq: seq };
+};
+
+async function loadLatestPage(bundle: string): Promise<void> {
+  const page = await A.getAppEvents(bundle, { limit: EVENT_PAGE });
+  if ((page as { __status?: number }).__status) throw new Error('设备摘要暂时无法读取');
+  const events = (page.events ?? []).map(normEvent);
+  eventWindow = {
+    bundle, events,
+    oldestSeq: events[0]?.appSeq ?? 0,
+    hasOlder: !!page.hasOlder,
+    total: Number(page.summary?.count ?? events.length),
+  };
 }
 
-let loaded: { key: string; pending: Promise<EventItem[]> } | null = null;
+export async function loadOlder(): Promise<void> {
+  const w = eventWindow;
+  if (!w?.hasOlder || store.loadingOlder) return;
+  store.loadingOlder = true;
+  try {
+    const page = await A.getAppEvents(w.bundle, { before: w.oldestSeq, limit: EVENT_PAGE });
+    if ((page as { __status?: number }).__status) throw new Error('设备摘要暂时无法读取');
+    // 轮询快照不挡手动翻页；只在窗口整体被换（切应用/外部清理重建）时丢弃结果
+    if (eventWindow !== w) return;
+    const older = (page.events ?? []).map(normEvent).filter((e) => (e.appSeq ?? 0) < w.oldestSeq);
+    if (older.length) w.events.unshift(...older);
+    w.oldestSeq = Number(page.oldestSeq) || w.oldestSeq;
+    w.hasOlder = !!page.hasOlder;
+    w.total = Number(page.summary?.count ?? w.total);
+    store.events = w.events.slice();
+    store.hasOlder = w.hasOlder;
+    store.eventTotal = w.total;
+  } finally { store.loadingOlder = false; }
+}
+
+export async function clearDeviceEvents(): Promise<boolean> {
+  if (!store.selected) return false;
+  const res = await A.clearAppEvents(store.selected);
+  if (res.error || (res as { __status?: number }).__status) return false;
+  eventWindow = null;
+  store.events = [];
+  store.seq = null;
+  store.detailTab = 'data';
+  await refresh(true);
+  return true;
+}
+
 export async function snapshot(): Promise<{ device: DeviceInfo; session: typeof store.session; events: EventItem[] }> {
   const { device, sessions } = await inspectDevice();
   const appSessions = sessions.filter((s) => s.bundleId === store.selected);
-  if (!appSessions.length) return { device, session: null, events: [] };
-  const latest = appSessions[0];
-  const expected = appSessions.reduce((sum, s) => sum + s.count, 0);
-  const live = device.apps.find((a) => a.bundleId === store.selected);
-  const key = [store.selected, expected, latest.lastSeq].join('/');
-  if (loaded?.key !== key) {
-    const pending = readEvents(store.selected, expected);
-    loaded = { key, pending };
-    pending.catch(() => { if (loaded?.pending === pending) loaded = null; });
+  if (!appSessions.length) {
+    eventWindow = null;
+    store.hasOlder = false;
+    store.eventTotal = 0;
+    return { device, session: null, events: [] };
   }
-  const events = await loaded.pending;
+  const latest = appSessions[0];
+  const live = device.apps.find((a) => a.bundleId === store.selected);
+  const gen = ++windowGen;
+  if (!eventWindow || eventWindow.bundle !== store.selected) {
+    await loadLatestPage(store.selected);
+  } else {
+    const tail = eventWindow.events[eventWindow.events.length - 1]?.appSeq ?? 0;
+    const page = await A.getAppEvents(store.selected, { after: tail, limit: 500 });
+    if ((page as { __status?: number }).__status) throw new Error('设备摘要暂时无法读取');
+    if (gen !== windowGen || !eventWindow) throw new Error('stale');
+    const fresh = (page.events ?? []).map(normEvent).filter((e) => (e.appSeq ?? 0) > tail);
+    if (fresh.length) eventWindow.events.push(...fresh);
+    const total = Number(page.summary?.count ?? NaN);
+    if (Number.isFinite(total)) {
+      // 设备记录在外部被清理（MCP/其他客户端）→ 已加载数据可能越界，整窗重读最新页
+      if (total < eventWindow.events.length) await loadLatestPage(store.selected);
+      else eventWindow.total = total;
+    }
+  }
+  if (gen !== windowGen || !eventWindow) throw new Error('stale');
+  const w = eventWindow;
+  store.hasOlder = w.hasOlder;
+  store.eventTotal = w.total;
   return {
     device,
     session: {
-      ...latest, count: expected, lastSeq: events[0]?.appSeq ?? events[0]?.seq ?? 0,
+      ...latest, count: w.total, lastSeq: w.events[w.events.length - 1]?.appSeq ?? latest.lastSeq,
       sessions: appSessions.length,
       processGeneration: live?.processGeneration ?? latest.processGeneration,
     },
-    events,
+    events: w.events.slice(),
   };
 }
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue';
-import { store, displayState, refresh, saveLocal, toast, downloadText } from '../store';
+import { store, displayState, refresh, saveLocal, toast, downloadText, loadOlder, clearDeviceEvents } from '../store';
 import { I } from '../icons';
 import {
   CATEGORIES, PHASES, getCategory, getPhase, titleFor, sizeLabel, shortTime, longTime, fmt,
@@ -24,6 +24,18 @@ const width = ref(loadView().width);
 const menu = ref<'' | 'filter' | 'more'>('');
 const filterOpen = ref(store.prefs.advancedFilters);
 const clearConfirm = ref(false);
+const deviceClearConfirm = ref(false);
+const clearing = ref(false);
+// 设备上未加载的更早记录数（总数 − 已加载）
+const olderLeft = computed(() => Math.max(0, store.eventTotal - store.events.length));
+
+async function confirmDeviceClear() {
+  clearing.value = true;
+  const ok = await clearDeviceEvents();
+  clearing.value = false;
+  deviceClearConfirm.value = false;
+  toast(ok ? '设备记录已清理' : '清理失败，请重试');
+}
 
 const VIEW_KEY = 'idh_workspace_view_v1';
 function loadView() {
@@ -211,6 +223,7 @@ onUnmounted(() => { document.removeEventListener('click', onDocClick); document.
             <div class="dropdown-divider"></div>
             <button class="dropdown-item" type="button" :disabled="!store.session" @click="clearConfirm = true; menu = ''">清空本板块显示</button>
             <button v-if="cleared" class="dropdown-item" type="button" @click="restore">恢复本板块显示</button>
+            <button class="dropdown-item" type="button" :disabled="!store.session" @click="deviceClearConfirm = true; menu = ''">清理设备上该应用记录</button>
             <button class="dropdown-item" type="button" @click="resetFilters">清空搜索与筛选</button>
             <button class="dropdown-item" type="button" @click="refresh(true); menu = ''">重新读取设备</button>
             <div class="dropdown-divider"></div>
@@ -247,6 +260,8 @@ onUnmounted(() => { document.removeEventListener('click', onDocClick); document.
           </button>
           <button v-if="shown.length < filtered.length" type="button" class="btn sm load-more"
             @click="store.limit += store.prefs.displayCap">继续加载 · {{ filtered.length - shown.length }} 条</button>
+          <button v-if="store.hasOlder" type="button" class="btn sm load-more" :disabled="store.loadingOlder"
+            @click="loadOlder">{{ store.loadingOlder ? '正在加载…' : '加载更早 · 设备还有 ' + olderLeft + ' 条' }}</button>
           <div v-if="!shown.length" class="empty-state">
             <strong>{{ emptyTitle }}</strong><p>{{ emptyDesc }}</p>
           </div>
@@ -268,6 +283,15 @@ onUnmounted(() => { document.removeEventListener('click', onDocClick); document.
         <div class="dialog-actions">
           <button class="btn sm" type="button" @click="clearConfirm = false">取消</button>
           <button class="btn sm danger" type="button" @click="confirmClear">清空显示</button>
+        </div>
+      </div>
+    </div>
+    <div v-if="deviceClearConfirm" class="modal-mask show" @click.self="deviceClearConfirm = false">
+      <div class="dialog-card" role="alertdialog" aria-label="清理设备记录确认">
+        <p>删除设备上该应用的全部已保存记录？此操作不可恢复。</p>
+        <div class="dialog-actions">
+          <button class="btn sm" type="button" @click="deviceClearConfirm = false">取消</button>
+          <button class="btn sm danger" type="button" :disabled="clearing" @click="confirmDeviceClear">{{ clearing ? '正在清理…' : '清理设备记录' }}</button>
         </div>
       </div>
     </div>

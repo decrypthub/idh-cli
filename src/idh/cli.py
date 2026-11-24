@@ -813,7 +813,7 @@ _PANEL_SETTINGS_ROUTE = "/api/session-settings"
 _PANEL_SETTINGS_MAX_BYTES = 4096
 # 设备侧注入接口（GET 读 / POST 写）与本机设备注册表
 _PANEL_DEVICE_READ = {"/api/apps", "/api/injection-scope"}
-_PANEL_DEVICE_WRITE = {"/api/injection-scope", "/api/apps/relaunch"}
+_PANEL_DEVICE_WRITE = {"/api/injection-scope", "/api/apps/relaunch", "/api/apps/clear"}
 _PANEL_DEVICES_ROUTE = "/api/devices"
 _BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}")
 
@@ -1055,7 +1055,7 @@ def _run_panel(args: argparse.Namespace) -> int:
             if not isinstance(request, dict):
                 self.write_json(400, {"error": "invalid_request"})
                 return
-            if self.path == "/api/apps/relaunch":
+            if self.path in {"/api/apps/relaunch", "/api/apps/clear"}:
                 bundle = str(request.get("bundleId") or "")
                 if not _BUNDLE_ID.fullmatch(bundle) or bundle.startswith("com.apple."):
                     self.write_json(400, {"error": "invalid_bundle_id"})

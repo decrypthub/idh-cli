@@ -13,9 +13,21 @@ const post = (path: string, body: unknown) =>
 export const getHealth = () => api<DeviceInfo>('/health');
 export const getSessions = () => api<{ sessions?: DeviceSession[] }>('/api/sessions');
 export const getApps = () => api<{ apps?: InstalledApp[]; scope?: string[]; error?: string }>('/api/apps');
-export const getAppEvents = (bundleId: string, after = 0, limit = 500) =>
-  api<{ events?: EventItem[]; hasMore?: boolean }>(
-    `/api/apps/${encodeURIComponent(bundleId)}/events?limit=${limit}&after=${after}`);
+export interface EventPage {
+  events?: EventItem[]; hasMore?: boolean; hasOlder?: boolean;
+  oldestSeq?: number; latestSeq?: number;
+  summary?: { count?: number; lastSeq?: number; byCategory?: Record<string, number> };
+}
+export const getAppEvents = (bundleId: string, opts: { after?: number; before?: number; limit?: number } = {}) => {
+  const q = new URLSearchParams({ limit: String(opts.limit ?? 150) });
+  if (opts.after != null) q.set('after', String(opts.after));
+  if (opts.before != null) q.set('before', String(opts.before));
+  return api<EventPage>(`/api/apps/${encodeURIComponent(bundleId)}/events?${q}`);
+};
+export const clearAppEvents = (bundleId: string) =>
+  api<{ ok?: boolean; error?: string }>('/api/apps/clear', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bundleId }),
+  });
 export const appIconUrl = (bundleId: string) => `/api/apps/${encodeURIComponent(bundleId)}/icon`;
 export const getDevices = () => api<{ devices?: DeviceRow[]; usb?: string[] }>('/api/devices');
 export const deviceAction = (body: Record<string, unknown>) => post('/api/devices', body);
