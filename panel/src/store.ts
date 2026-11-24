@@ -46,6 +46,8 @@ export const store = reactive({
   hasOlder: false,
   eventTotal: 0,
   loadingOlder: false,
+  // 设备侧按类别真实总数（summary.byCategory），空数组表示未取得
+  catTotals: [] as number[],
   // 板块与展示
   tab: 'crypto',
   displayByBoard: new Map<string, BoardDisplay>(),
@@ -163,6 +165,7 @@ export function changeSelection(id: string) {
   store.hasOlder = false;
   store.eventTotal = 0;
   store.loadingOlder = false;
+  store.catTotals = [];
   store.displayByBoard.clear();
   store.seq = null;
   store.detailTab = 'data';
@@ -197,6 +200,7 @@ async function loadLatestPage(bundle: string): Promise<void> {
     hasOlder: !!page.hasOlder,
     total: Number(page.summary?.count ?? events.length),
   };
+  if (Array.isArray(page.summary?.byCategory)) store.catTotals = page.summary.byCategory;
 }
 
 export async function loadOlder(): Promise<void> {
@@ -216,6 +220,7 @@ export async function loadOlder(): Promise<void> {
     store.events = w.events.slice();
     store.hasOlder = w.hasOlder;
     store.eventTotal = w.total;
+    if (Array.isArray(page.summary?.byCategory)) store.catTotals = page.summary.byCategory;
   } finally { store.loadingOlder = false; }
 }
 
@@ -258,6 +263,7 @@ export async function snapshot(): Promise<{ device: DeviceInfo; session: typeof 
       if (total < eventWindow.events.length) await loadLatestPage(store.selected);
       else eventWindow.total = total;
     }
+    if (Array.isArray(page.summary?.byCategory)) store.catTotals = page.summary.byCategory;
   }
   if (gen !== windowGen || !eventWindow) throw new Error('stale');
   const w = eventWindow;

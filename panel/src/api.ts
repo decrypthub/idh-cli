@@ -16,7 +16,7 @@ export const getApps = () => api<{ apps?: InstalledApp[]; scope?: string[]; erro
 export interface EventPage {
   events?: EventItem[]; hasMore?: boolean; hasOlder?: boolean;
   oldestSeq?: number; latestSeq?: number;
-  summary?: { count?: number; lastSeq?: number; byCategory?: Record<string, number> };
+  summary?: { count?: number; lastSeq?: number; byCategory?: number[] };
 }
 export const getAppEvents = (bundleId: string, opts: { after?: number; before?: number; limit?: number } = {}) => {
   const q = new URLSearchParams({ limit: String(opts.limit ?? 150) });

@@ -28,8 +28,14 @@ const TOOLS: Array<{ key: ViewKey; label: string; icon: string }> = [
 ];
 
 const counts = computed(() => {
+  // 优先设备侧按类别总数；未取得时退回已加载窗口内的计数
+  const totals = store.catTotals;
   const c: Record<string, number> = {};
-  for (const item of NAV) c[item.key] = store.events.reduce((s, e) => s + Number(item.cats!.includes(e.category)), 0);
+  for (const item of NAV) {
+    c[item.key] = totals.length
+      ? item.cats!.reduce((s, cat) => s + (totals[cat] ?? 0), 0)
+      : store.events.reduce((s, e) => s + Number(item.cats!.includes(e.category)), 0);
+  }
   return c;
 });
 
