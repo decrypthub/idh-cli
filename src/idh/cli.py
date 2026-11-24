@@ -808,6 +808,7 @@ def _run_auto_update(args: argparse.Namespace) -> None:
 
 _PANEL_SESSION_ROUTE = re.compile(r"/api/sessions(?:/[A-Za-z0-9_-]{1,64}(?:/events)?)?")
 _PANEL_APP_EVENTS_ROUTE = re.compile(r"/api/apps/[A-Za-z0-9][A-Za-z0-9._-]{0,254}/events")
+_PANEL_APP_ICON_ROUTE = re.compile(r"/api/apps/[A-Za-z0-9][A-Za-z0-9._-]{0,254}/icon")
 _PANEL_SETTINGS_ROUTE = "/api/session-settings"
 _PANEL_SETTINGS_MAX_BYTES = 4096
 # 设备侧注入接口（GET 读 / POST 写）与本机设备注册表
@@ -829,6 +830,14 @@ def _panel_request(
         response = connection.getresponse()
         payload = response.read() if response.status == 200 or path == _PANEL_SETTINGS_ROUTE else b""
         return response.status, json.loads(payload) if payload else None
+
+
+def _panel_blob(endpoint: AppEndpoint, path: str) -> tuple[int, bytes]:
+    endpoint = resolve_endpoint(endpoint)
+    with contextlib.closing(HTTPConnection(endpoint.primary_address, endpoint.port, timeout=3)) as connection:
+        connection.request("GET", path, headers={"Accept": "image/png"})
+        response = connection.getresponse()
+        return response.status, response.read() if response.status == 200 else b""
 
 
 def _run_panel(args: argparse.Namespace) -> int:
@@ -1083,6 +1092,20 @@ def _run_panel(args: argparse.Namespace) -> int:
                 kind = "text/html; charset=utf-8"
             elif not target.query and target.path in assets:
                 body, kind = assets[target.path]
+            elif not target.query and _PANEL_APP_ICON_ROUTE.fullmatch(target.path):
+                if current["endpoint"] is None:
+                    self.send_error(502)
+                    return
+                try:
+                    code, blob = _panel_blob(current["endpoint"], self.path)
+                except (HTTPException, OSError, ValueError, UsageError):
+                    self.send_error(502)
+                    return
+                if code != 200 or not blob:
+                    self.send_error(404)
+                    return
+                self.write_body(200, blob, "image/png")
+                return
             elif session_route or app_events_route or self.path == "/health" or (
                 not target.query and target.path in _PANEL_DEVICE_READ
             ):

@@ -115,6 +115,8 @@
   .app-check:disabled { opacity:.4 }
   .app-check-slot { width:16px; flex:none }
   .app-mini { margin-left:8px; flex:none }
+  .app-ico-img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; border-radius:9px }
+  .app-item .app-ico-img { border-radius:7px }
   .app-copy { display:flex; flex-direction:column; min-width:0; flex:1 }
   .app-name { overflow:hidden; color:var(--ink); font-size:13px; font-weight:600; text-overflow:ellipsis; white-space:nowrap }
   .app-pkg { overflow:hidden; color:var(--muted); font:10px/1.3 ui-monospace,SFMono-Regular,Consolas,monospace; text-overflow:ellipsis; white-space:nowrap }
@@ -445,7 +447,7 @@
 </div>
 <dialog class='app-dialog' id='appDialog' aria-label='选择应用'>
   <div class='app-dialog-card'>
-    <span class='app-face'><span class='app-letter' id='appFaceLetter'>?</span></span>
+    <span class='app-face'><img class='app-ico-img' id='appFaceImg' alt='' hidden onerror='this.hidden=true' onload='this.hidden=false'><span class='app-letter' id='appFaceLetter'>?</span></span>
     <div class='app-dialog-id'>
       <strong id='appDialogName'>未选择</strong>
       <span id='appDialogPkg'></span>
@@ -637,7 +639,7 @@
   function appRows(query) {
     const q=(query||"").trim().toLowerCase();
     const match=a=>!q||(a.bundleId+" "+(a.name||"")).toLowerCase().includes(q);
-    const face=a=>'<span class="app-face"><span class="app-letter">'+esc((a.name||a.bundleId||"?").slice(0,1).toUpperCase())+'</span></span>';
+    const face=a=>'<span class="app-face"><img class="app-ico-img" src="/api/apps/'+encodeURIComponent(a.bundleId)+'/icon" alt="" loading="lazy" onerror="this.remove()"><span class="app-letter">'+esc((a.name||a.bundleId||"?").slice(0,1).toUpperCase())+'</span></span>';
     const stateOf=a=>a.kind==="record"
       ? (a.running?"运行中":sessionStatus[a.status]||"会话")
       : (a.running?"运行中":"");
@@ -663,6 +665,12 @@
     const installedInfo=appCatalog.installed.find((a)=>a.bundleId===appCatalog.selected);
     const name=info?.name||installedInfo?.name||appCatalog.selected;
     $("appFaceLetter").textContent=(name||installedInfo?.name||appCatalog.selected||"?").slice(0,1).toUpperCase()||"?";
+    const faceImg=$("appFaceImg");
+    faceImg.hidden=true;
+    if(appCatalog.selected){
+      faceImg.src="/api/apps/"+encodeURIComponent(appCatalog.selected)+"/icon";
+      if(faceImg.complete&&faceImg.naturalWidth)faceImg.hidden=false;
+    }
     $("appDialogName").textContent=name||"未选择";
     $("appDialogPkg").textContent=appCatalog.selected||"";
     $("appDialogState").textContent=info
