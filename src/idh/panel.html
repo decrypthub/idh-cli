@@ -111,6 +111,10 @@
   .app-item:hover,.app-item.active { background:var(--surface-3) }
   .app-item .app-face { width:32px; height:32px }
   .app-item .app-letter { width:32px; height:32px; border-radius:7px; font-size:13px }
+  .app-check { width:16px; height:16px; margin:0; flex:none; accent-color:#007aff }
+  .app-check:disabled { opacity:.4 }
+  .app-check-slot { width:16px; flex:none }
+  .app-mini { margin-left:8px; flex:none }
   .app-copy { display:flex; flex-direction:column; min-width:0; flex:1 }
   .app-name { overflow:hidden; color:var(--ink); font-size:13px; font-weight:600; text-overflow:ellipsis; white-space:nowrap }
   .app-pkg { overflow:hidden; color:var(--muted); font:10px/1.3 ui-monospace,SFMono-Regular,Consolas,monospace; text-overflow:ellipsis; white-space:nowrap }
@@ -637,9 +641,16 @@
     const stateOf=a=>a.kind==="record"
       ? (a.running?"运行中":sessionStatus[a.status]||"会话")
       : (a.running?"运行中":"");
-    const row=a=>'<button class="app-item'+(a.bundleId===appCatalog.selected?" active":"")+'" type="button" role="option" aria-selected="'+(a.bundleId===appCatalog.selected)+'" data-app="'+esc(a.bundleId)+'">'+face(a)+
+      const injectable=a=>!(a.kind==="system"||a.bundleId.startsWith("com.apple."));
+    const check=a=>{
+      if(!injectable(a))return '<span class="app-check-slot"></span>';
+      const scope=injectData?.scope||[], on=scope.includes(a.bundleId), busy=injectPending.has(a.bundleId);
+      return '<input class="app-check" type="checkbox" data-inject="'+esc(a.bundleId)+'"'+(on?" checked":"")+(injectData===null||busy?" disabled":"")+' title="'+(on?"关闭注入":"开启注入")+'" aria-label="注入">';
+    };
+    const row=a=>'<div class="app-item'+(a.bundleId===appCatalog.selected?" active":"")+'" role="option" tabindex="0" aria-selected="'+(a.bundleId===appCatalog.selected)+'" data-app="'+esc(a.bundleId)+'">'+check(a)+face(a)+
       '<span class="app-copy"><span class="app-name">'+esc(a.name||a.bundleId)+'</span><span class="app-pkg">'+esc(a.bundleId)+'</span></span>'+
-      '<span class="app-state'+(a.running||a.kind==="record"?" on":"")+'">'+esc(stateOf(a))+(a.count?' · '+a.count+' 条':"")+'</span></button>';
+      '<span class="app-state'+(a.running||a.kind==="record"?" on":"")+'">'+esc(stateOf(a))+(a.count?' · '+a.count+' 条':"")+'</span>'+
+      (injectPending.has(a.bundleId)?'<button class="btn sm app-mini" type="button" data-relaunch="'+esc(a.bundleId)+'">重启生效</button>':"")+'</div>';
     const recorded=appCatalog.apps.filter(match);
     const recordedIds=new Set(recorded.map(a=>a.bundleId));
     const installed=appCatalog.installed.filter(a=>!recordedIds.has(a.bundleId)&&match(a));
@@ -675,10 +686,23 @@
     paintAppDialog();
     $("appDialog").showModal();
     $("appSearch").focus();
+    loadInject().then(paintAppDialog);
   });
   $("appDialogClose").addEventListener("click",()=>$("appDialog").close());
   $("appSearch").addEventListener("input",()=>{$("appChoices").innerHTML=appRows($("appSearch").value);});
+  $("appChoices").addEventListener("change",(event)=>{
+    const box=event.target.closest("[data-inject]");
+    if(box)void toggleScope(box.dataset.inject,box.checked).then(paintAppDialog);
+  });
   $("appChoices").addEventListener("click",(event)=>{
+    if(event.target.closest("[data-inject]"))return;
+    const relaunch=event.target.closest("[data-relaunch]");
+    if(relaunch){void relaunchBundle(relaunch.dataset.relaunch).then(paintAppDialog);return;}
+    const option=event.target.closest("[data-app]");
+    if(option && source.choose(option.dataset.app)) $("appDialog").close();
+  });
+  $("appChoices").addEventListener("keydown",(event)=>{
+    if(event.key!=="Enter"||event.target.closest("[data-inject],[data-relaunch]"))return;
     const option=event.target.closest("[data-app]");
     if(option && source.choose(option.dataset.app)) $("appDialog").close();
   });
@@ -1399,23 +1423,32 @@
   }
   $("injectRefresh").addEventListener("click",()=>loadInject(true));
   $("injectQ").addEventListener("input",renderInject);
+  async function toggleScope(id,on){
+    let data;
+    try{data=await (await fetch("/api/injection-scope",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({[on?"add":"remove"]:[id]})})).json();}
+    catch{toast("注入范围更新失败");return false;}
+    if(data.error){toast("注入范围更新失败");return false;}
+    const app=(injectData?.apps||[]).find((a)=>a.bundleId===id);
+    if(app&&app.running)injectPending.add(id);else injectPending.delete(id);
+    injectData.scope=data.scope||injectData.scope;
+    return true;
+  }
+  async function relaunchBundle(id){
+    await fetch("/api/apps/relaunch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bundleId:id})});
+    injectPending.delete(id);
+    setTimeout(()=>loadInject(true),1500);
+  }
   $("injectRows").addEventListener("change",async(event)=>{
     const box=event.target.closest("[data-inject]");if(!box)return;
     box.disabled=true;
-    const id=box.dataset.inject, action=box.checked?"add":"remove";
-    const data=await (await fetch("/api/injection-scope",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({[action]:[id]})})).json();
-    if(data.error){box.disabled=false;box.checked=!box.checked;return;}
-    const app=(injectData?.apps||[]).find((a)=>a.bundleId===id);
-    if(app&&app.running)injectPending.add(id);
-    injectData.scope=data.scope||injectData.scope;
+    await toggleScope(box.dataset.inject,box.checked);
     renderInject();
   });
   $("injectRows").addEventListener("click",async(event)=>{
     const btn=event.target.closest("[data-relaunch]");if(!btn)return;
     btn.disabled=true;
-    await fetch("/api/apps/relaunch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bundleId:btn.dataset.relaunch})});
-    injectPending.delete(btn.dataset.relaunch);
-    setTimeout(()=>loadInject(true),1500);
+    await relaunchBundle(btn.dataset.relaunch);
+    renderInject();
   });
 
   buildTabs();setWidth(view.width);setMenu("");render(true);pageReady=true;
