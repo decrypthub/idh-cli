@@ -684,11 +684,12 @@
   function sessionOptions(sessions,selected,installed) {
     appCatalog={apps:sessions,installed:installed||[],selected};
     const info=sessions.find((s)=>s.sessionId===selected);
-    $("session-title").textContent=info?.name||info?.bundleId || "应用记录";
+    const instName=appCatalog.installed.find((a)=>a.bundleId===selected)?.name;
+    $("session-title").textContent=info?.name||instName||info?.bundleId||selected || "应用记录";
     $("session-meta").textContent=info
       ? [sessionStatus[info.status] || "会话",fmt(longTime,info.createdAtMs),
          (info.sessions>1?info.sessions+" 个会话 · ":"")+info.count+" 条"].join(" · ")
-      : "暂无可读取的应用记录";
+      : "暂无此应用的记录";
     paintAppDialog();
   }
   $("processBtn").addEventListener("click",()=>{
@@ -796,7 +797,7 @@
     const label=active?(stale?"上次登记为在线":"在线，已登记"):
       session?.status==="ended"?"历史会话，未见对应进程在线":session?"未见登记":"无在线进程";
     const foot=[label,
-      "PID "+(active?.pid??session?.pid??"—"),
+      (active?.pid||session?.pid)?"PID "+(active?.pid??session?.pid):null,
       session?String(session.sessions??1)+" 个会话":null,
       session?String(session.count)+" 条":null].filter(Boolean).join(" · ");
     $("procinfo").textContent=foot;
@@ -1384,8 +1385,11 @@
   function paintDeviceChip() {
     const current=deviceRows.find((d)=>d.selected);
     $("deviceTitle").textContent=current?current.address:"未连接";
-    $("deviceLink").textContent=current?((current.transport==="usb"?"USB":"LAN")+" · "+
+    const link=current?((current.transport==="usb"?"USB":"LAN")+" · "+
       (state.network==="online"?"在线":state.network==="offline"?"离线":"连接中")):"";
+    $("deviceLink").textContent=link;
+    const row=$("idh-devices")?.querySelector('.dropdown-item[aria-selected="true"] .dropdown-sub');
+    if(row&&link)row.textContent=link;
   }
   async function loadDevices() {
     try{const data=await (await fetch("/api/devices")).json();deviceRows=data.devices||[];usbRows=data.usb||[];}catch{deviceRows=[];usbRows=[];}

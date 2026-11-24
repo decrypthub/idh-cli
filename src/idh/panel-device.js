@@ -155,7 +155,10 @@
       const device = await health.json();
       const sessions = history.ok ? (await history.json()).sessions : [];
       const installed = installedRes.ok ? (await installedRes.json()).apps || [] : [];
-      if (!sessions.some((session) => session.bundleId === selected)) changeSelection(sessions[0]?.bundleId || "");
+      const known = selected
+        && (sessions.some((session) => session.bundleId === selected)
+          || installed.some((app) => app.bundleId === selected));
+      if (!known) changeSelection(sessions[0]?.bundleId || installed[0]?.bundleId || "");
       selectOptions(sessions, installed);
       const notice = document.getElementById("idh-session-notice");
       notice.textContent = history.ok ? "" : "设备在线，会话暂时无法读取。";
@@ -397,7 +400,9 @@
     return Object.freeze({
       snapshot,
       choose(id) {
-        if (!catalog?.sessions.some((session) => session.bundleId === id)) return false;
+        const known = catalog?.sessions.some((session) => session.bundleId === id)
+          || catalog?.installed?.some((app) => app.bundleId === id);
+        if (!known) return false;
         changeSelection(id);
         return true;
       }
