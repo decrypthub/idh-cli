@@ -44,7 +44,7 @@ license-files = ["LICENSE"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-idh = ["panel.html", "panel-device.js", "wechat-follow.png", "prompts/*.json", "prompts/*.md", "prompts/skills/*.md"]
+idh = ["panel.html", "wechat-follow.png", "prompts/*.json", "prompts/*.md", "prompts/skills/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

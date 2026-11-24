@@ -213,10 +213,11 @@ def test_panel_reads_history_independently_of_online_apps(
     try:
         with urlopen(base + "/", timeout=3) as response:
             page = response.read().decode()
-            assert "id='appChoices'" in page and "id='tabbar'" in page
-            assert "class='splitter'" in page and 'class="hdr-raven"' in page
-        with urlopen(base + "/panel-device.js", timeout=3) as response:
-            assert b"IDHDevicePanel" in response.read()
+            assert 'id="app"' in page
+            assert 'name="idh-device-endpoint"' in page and device_url in page
+        with pytest.raises(HTTPError) as error:
+            urlopen(base + "/panel-device.js", timeout=3)
+        assert error.value.code == 404
         with urlopen(base + "/wechat-follow.png", timeout=3) as response:
             assert response.read(8) == b"\x89PNG\r\n\x1a\n"
         with urlopen(base + "/health", timeout=3) as response:

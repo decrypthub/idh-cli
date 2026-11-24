@@ -912,7 +912,6 @@ def _run_panel(args: argparse.Namespace) -> int:
             b"<!-- IDH_DEVICE_ENDPOINT -->", metadata
         )
         assets = {
-            "/panel-device.js": (panel_files.joinpath("panel-device.js").read_bytes(), "text/javascript; charset=utf-8"),
             "/wechat-follow.png": (panel_files.joinpath("wechat-follow.png").read_bytes(), "image/png"),
         }
     except (HTTPException, OSError, ValueError, UsageError) as exc:
