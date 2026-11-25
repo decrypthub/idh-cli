@@ -25,7 +25,10 @@ class DeviceHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path, _, query = self.path.partition("?")
         if path == "/api/apps/com.example.fixture/tools/files":
-            self._send(200, json.dumps({"entries": [{"name": "a.txt", "type": "file"}]}).encode())
+            if "path=missing" in query:
+                self._send(409, json.dumps({"ok": False, "error": "not_online"}).encode())
+            else:
+                self._send(200, json.dumps({"entries": [{"name": "a.txt", "type": "file"}]}).encode())
             return
         if path == "/api/apps/com.example.fixture/tools/files/download":
             body = b"file-bytes"
@@ -257,6 +260,14 @@ def test_panel_reads_history_independently_of_online_apps(
         tools = base + "/api/apps/com.example.fixture/tools"
         with urlopen(tools + "/files?path=", timeout=3) as response:
             assert json.load(response)["entries"][0]["name"] == "a.txt"
+        with pytest.raises(HTTPError) as error:
+            urlopen(tools + "/files?path=missing", timeout=3)
+        assert error.value.code == 409
+        assert json.loads(error.value.read())["error"] == "not_online"
+        with pytest.raises(HTTPError) as error:
+            urlopen(tools + "/files?path=missing", timeout=3)
+        assert error.value.code == 409
+        assert json.loads(error.value.read())["error"] == "not_online"
         with urlopen(tools + "/files/download?path=a.txt", timeout=3) as response:
             assert response.read() == b"file-bytes"
             assert response.headers.get_content_type() == "application/octet-stream"

@@ -833,7 +833,7 @@ def _panel_request(
     with contextlib.closing(HTTPConnection(endpoint.primary_address, endpoint.port, timeout=10)) as connection:
         connection.request("GET" if body is None else "POST", path, body=body, headers=headers)
         response = connection.getresponse()
-        payload = response.read() if response.status == 200 or path == _PANEL_SETTINGS_ROUTE else b""
+        payload = response.read(65537)
         return response.status, json.loads(payload) if payload else None
 
 
@@ -842,11 +842,7 @@ def _panel_blob(endpoint: AppEndpoint, path: str, *, accept: str = "image/png") 
     with contextlib.closing(HTTPConnection(endpoint.primary_address, endpoint.port, timeout=30)) as connection:
         connection.request("GET", path, headers={"Accept": accept})
         response = connection.getresponse()
-        return (
-            response.status,
-            response.read() if response.status == 200 else b"",
-            response.headers.get_content_type() if response.status == 200 else "application/octet-stream",
-        )
+        return response.status, response.read(), response.headers.get_content_type()
 
 
 def _run_panel(args: argparse.Namespace) -> int:
@@ -1132,7 +1128,12 @@ def _run_panel(args: argparse.Namespace) -> int:
                             current["endpoint"], self.path, accept="application/octet-stream"
                         )
                         if code != 200:
-                            self.send_error(404 if code == 404 else 502)
+                            try:
+                                detail = json.loads(blob) if kind == "application/json" else None
+                            except (UnicodeDecodeError, json.JSONDecodeError):
+                                detail = None
+                            self.write_json(code if code in {400, 401, 404, 409} else 502,
+                                          detail if isinstance(detail, dict) else {"error": "process_tools_failed"})
                             return
                         self.write_body(200, blob, kind)
                         return
@@ -1141,7 +1142,8 @@ def _run_panel(args: argparse.Namespace) -> int:
                     self.send_error(502)
                     return
                 if code != 200:
-                    self.send_error(code if code in {400, 401, 404} else 502)
+                    self.write_json(code if code in {400, 401, 404, 409} else 502,
+                                    data if isinstance(data, dict) else {"error": "process_tools_failed"})
                     return
                 body = json.dumps(data).encode()
                 kind = "application/json"
