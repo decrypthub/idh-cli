@@ -157,6 +157,7 @@ MUTATING_TOOLS = frozenset(
         "set_capture",
         "set_pause",
         "clear_events",
+        "relaunch_app",
         "start_dump",
         "set_spoof",
         "set_noise_config",
