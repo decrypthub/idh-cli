@@ -20,9 +20,21 @@ class DeviceHandler(BaseHTTPRequestHandler):
     revision = "0"
     limits = {"maxRecords": 2000, "maxBytes": 2097152, "recordSeconds": 300}
     settings_posts: list[dict] = []
+    tool_posts: list[tuple[str, dict]] = []
 
     def do_GET(self) -> None:
         path, _, query = self.path.partition("?")
+        if path == "/api/apps/com.example.fixture/tools/files":
+            self._send(200, json.dumps({"entries": [{"name": "a.txt", "type": "file"}]}).encode())
+            return
+        if path == "/api/apps/com.example.fixture/tools/files/download":
+            body = b"file-bytes"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path == "/api/session-settings":
             self._send(200, json.dumps({
                 "ok": True, "revision": self.revision, "deviceSession": self.limits,
@@ -50,6 +62,10 @@ class DeviceHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         message = json.loads(self.rfile.read(length) or b"{}")
+        if self.path.startswith("/api/apps/com.example.fixture/tools/dump"):
+            self.tool_posts.append((self.path, message))
+            self._send(200, json.dumps({"ok": True, "started": True}).encode())
+            return
         if self.path == "/api/session-settings":
             self.settings_posts.append(message)
             if message["revision"] != self.revision:
@@ -108,6 +124,7 @@ def device_url() -> str:
     DeviceHandler.revision = "0"
     DeviceHandler.limits = {"maxRecords": 2000, "maxBytes": 2097152, "recordSeconds": 300}
     DeviceHandler.settings_posts = []
+    DeviceHandler.tool_posts = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), DeviceHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -237,6 +254,16 @@ def test_panel_reads_history_independently_of_online_apps(
             assert error.value.code == 404
         with urlopen(base + "/health", timeout=3) as response:
             assert json.load(response)["ok"] is True
+        tools = base + "/api/apps/com.example.fixture/tools"
+        with urlopen(tools + "/files?path=", timeout=3) as response:
+            assert json.load(response)["entries"][0]["name"] == "a.txt"
+        with urlopen(tools + "/files/download?path=a.txt", timeout=3) as response:
+            assert response.read() == b"file-bytes"
+            assert response.headers.get_content_type() == "application/octet-stream"
+        dump_headers = {"Content-Type": "application/json", "Origin": base}
+        with urlopen(Request(tools + "/dump?mode=bin", data=b"{}", headers=dump_headers), timeout=3) as response:
+            assert json.load(response)["started"] is True
+        assert DeviceHandler.tool_posts == [("/api/apps/com.example.fixture/tools/dump?mode=bin", {})]
         with pytest.raises(HTTPError) as error:
             urlopen(Request(base + "/api/sessions", headers={"Host": "unknown.example"}), timeout=3)
         assert error.value.code == 400

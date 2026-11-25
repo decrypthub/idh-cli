@@ -809,6 +809,11 @@ def _run_auto_update(args: argparse.Namespace) -> None:
 _PANEL_SESSION_ROUTE = re.compile(r"/api/sessions(?:/[A-Za-z0-9_-]{1,64}(?:/events)?)?")
 _PANEL_APP_EVENTS_ROUTE = re.compile(r"/api/apps/[A-Za-z0-9][A-Za-z0-9._-]{0,254}/events")
 _PANEL_APP_ICON_ROUTE = re.compile(r"/api/apps/[A-Za-z0-9][A-Za-z0-9._-]{0,254}/icon")
+_PANEL_TOOL_PATH = r"(?:files|files/preview|files/download|symbols|symbols/images|dump/images|dump/status|dump/download|dump/image)"
+_PANEL_APP_TOOLS_ROUTE = re.compile(
+    rf"/api/apps/[A-Za-z0-9][A-Za-z0-9._-]{{0,254}}/tools/{_PANEL_TOOL_PATH}"
+)
+_PANEL_APP_DUMP_ROUTE = re.compile(r"/api/apps/[A-Za-z0-9][A-Za-z0-9._-]{0,254}/tools/dump")
 _PANEL_SETTINGS_ROUTE = "/api/session-settings"
 _PANEL_SETTINGS_MAX_BYTES = 4096
 # 设备侧注入接口（GET 读 / POST 写）与本机设备注册表
@@ -832,12 +837,16 @@ def _panel_request(
         return response.status, json.loads(payload) if payload else None
 
 
-def _panel_blob(endpoint: AppEndpoint, path: str) -> tuple[int, bytes]:
+def _panel_blob(endpoint: AppEndpoint, path: str, *, accept: str = "image/png") -> tuple[int, bytes, str]:
     endpoint = resolve_endpoint(endpoint)
-    with contextlib.closing(HTTPConnection(endpoint.primary_address, endpoint.port, timeout=3)) as connection:
-        connection.request("GET", path, headers={"Accept": "image/png"})
+    with contextlib.closing(HTTPConnection(endpoint.primary_address, endpoint.port, timeout=30)) as connection:
+        connection.request("GET", path, headers={"Accept": accept})
         response = connection.getresponse()
-        return response.status, response.read() if response.status == 200 else b""
+        return (
+            response.status,
+            response.read() if response.status == 200 else b"",
+            response.headers.get_content_type() if response.status == 200 else "application/octet-stream",
+        )
 
 
 def _run_panel(args: argparse.Namespace) -> int:
@@ -1014,7 +1023,13 @@ def _run_panel(args: argparse.Namespace) -> int:
                 self.send_error(400)
                 return
             allowed = {_PANEL_SETTINGS_ROUTE, _PANEL_DEVICES_ROUTE} | _PANEL_DEVICE_WRITE
-            if self.path not in allowed:
+            try:
+                post_path = urlsplit(self.path).path
+            except ValueError:
+                self.send_error(400)
+                return
+            tools_dump = bool(_PANEL_APP_DUMP_ROUTE.fullmatch(post_path))
+            if self.path not in allowed and not tools_dump:
                 self.send_error(404)
                 return
             if self.headers.get_all("Origin") != [f"http://{self.headers['Host']}"]:
@@ -1055,7 +1070,9 @@ def _run_panel(args: argparse.Namespace) -> int:
             if not isinstance(request, dict):
                 self.write_json(400, {"error": "invalid_request"})
                 return
-            if self.path in {"/api/apps/relaunch", "/api/apps/clear"}:
+            if tools_dump:
+                pass
+            elif self.path in {"/api/apps/relaunch", "/api/apps/clear"}:
                 bundle = str(request.get("bundleId") or "")
                 if not _BUNDLE_ID.fullmatch(bundle) or bundle.startswith("com.apple."):
                     self.write_json(400, {"error": "invalid_bundle_id"})
@@ -1104,12 +1121,36 @@ def _run_panel(args: argparse.Namespace) -> int:
                 kind = "text/html; charset=utf-8"
             elif not target.query and target.path in assets:
                 body, kind = assets[target.path]
+            elif _PANEL_APP_TOOLS_ROUTE.fullmatch(target.path):
+                if current["endpoint"] is None:
+                    self.send_error(502)
+                    return
+                binary = target.path.endswith(("/files/download", "/dump/download", "/dump/image"))
+                try:
+                    if binary:
+                        code, blob, kind = _panel_blob(
+                            current["endpoint"], self.path, accept="application/octet-stream"
+                        )
+                        if code != 200 or not blob:
+                            self.send_error(404 if code == 404 else 502)
+                            return
+                        self.write_body(200, blob, kind)
+                        return
+                    code, data = _panel_request(current["endpoint"], self.path)
+                except (HTTPException, OSError, ValueError, UsageError):
+                    self.send_error(502)
+                    return
+                if code != 200:
+                    self.send_error(code if code in {400, 401, 404} else 502)
+                    return
+                body = json.dumps(data).encode()
+                kind = "application/json"
             elif not target.query and _PANEL_APP_ICON_ROUTE.fullmatch(target.path):
                 if current["endpoint"] is None:
                     self.send_error(502)
                     return
                 try:
-                    code, blob = _panel_blob(current["endpoint"], self.path)
+                    code, blob, _kind = _panel_blob(current["endpoint"], self.path)
                 except (HTTPException, OSError, ValueError, UsageError):
                     self.send_error(502)
                     return
