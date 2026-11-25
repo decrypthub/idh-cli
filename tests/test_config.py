@@ -5,7 +5,14 @@ import json
 
 import pytest
 
-from idh.config import clear_endpoints, load_saved_endpoints, remove_endpoint, save_endpoint
+from idh.config import (
+    clear_endpoints,
+    load_saved_endpoints,
+    load_selected,
+    remove_endpoint,
+    save_endpoint,
+    save_selected,
+)
 from idh.models import AppEndpoint
 
 
@@ -57,6 +64,18 @@ def test_same_address_updates_kind_and_keeps_old_files(tmp_path) -> None:
 
     assert save_endpoint(AppEndpoint.from_url("192.168.100.65:8088"), path) is False
     assert load_saved_endpoints(path)[0].kind == "device"
+
+
+def test_selected_round_trip(tmp_path) -> None:
+    path = tmp_path / "connections.json"
+    save_endpoint(AppEndpoint.from_url("192.168.1.10:8088").with_kind("device"), path)
+    save_endpoint(AppEndpoint.from_url("192.168.1.11:8088").with_kind("device"), path)
+
+    save_selected("http://192.168.1.11:8088/api/mcp", path)
+    assert load_selected(path) == "http://192.168.1.11:8088/api/mcp"
+    # 无关写（增删端点）不清掉选中
+    save_endpoint(AppEndpoint.from_url("192.168.1.12:8088").with_kind("device"), path)
+    assert load_selected(path) == "http://192.168.1.11:8088/api/mcp"
 
 
 def test_invalid_saved_config_is_reported(tmp_path) -> None:

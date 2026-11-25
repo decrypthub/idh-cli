@@ -270,6 +270,7 @@ def test_gateway_requires_confirmation_for_mutating_tool(remote_endpoint: AppEnd
 def test_future_mutating_tool_prefix_is_guarded() -> None:
     assert is_mutating_tool("set_future_option") is True
     assert is_mutating_tool("clear_future_cache") is True
+    assert is_mutating_tool("relaunch_app") is True
     assert is_mutating_tool("get_stats") is False
 
 

@@ -21,8 +21,10 @@ from .config import (
     clear_endpoints,
     config_path,
     load_saved_endpoints,
+    load_selected,
     remove_endpoint,
     save_endpoint,
+    save_selected,
 )
 from .gateway import (
     GatewayServer,
@@ -43,6 +45,7 @@ from .selfupdate import (
 )
 from .settings import load_settings, update_settings
 from .status import status
+from .usbmux import UsbMuxError, resolve_endpoint, usb_endpoint, usbmux_devices
 
 PROBE_TIMEOUT = 3.0
 
@@ -55,7 +58,10 @@ def _manual_endpoints(values: Sequence[str], *, include_saved: bool = True) -> l
     endpoints = list(load_saved_endpoints()) if include_saved else []
     seen = {endpoint.mcp_url.casefold() for endpoint in endpoints}
     for value in values:
-        manual = AppEndpoint.from_url(value)
+        if value == "usb" or value.startswith("usb:"):
+            manual = _pick_usb_endpoint(value[4:] or None)
+        else:
+            manual = AppEndpoint.from_url(value)
         key = manual.mcp_url.casefold()
         if key in seen:
             continue
@@ -64,15 +70,31 @@ def _manual_endpoints(values: Sequence[str], *, include_saved: bool = True) -> l
     return endpoints
 
 
-def _probed_endpoints(endpoints: Sequence[AppEndpoint]) -> list[AppEndpoint]:
+def _pick_usb_endpoint(udid: str | None = None) -> AppEndpoint:
+    """frida -U 等价入口：usb 或 usb:<udid>。单设备免选，多设备按 udid 选。"""
+    try:
+        devices = usbmux_devices()
+    except UsbMuxError as exc:
+        raise ValueError(f"cannot reach usbmuxd: {exc}") from exc
+    if udid:
+        matches = [device for device in devices if device["udid"].casefold() == udid.casefold()]
+        if not matches:
+            raise ValueError(f"usb device not attached: {udid}")
+    elif len(devices) == 1:
+        matches = devices
+    elif not devices:
+        raise ValueError("no USB devices attached")
+    else:
+        lines = "\n".join(f"  {device['udid']}" for device in devices)
+        raise ValueError(f"multiple USB devices attached; use usb:<udid>\n{lines}")
+    return usb_endpoint(matches[0]["udid"])
+
+
+def _probed_endpoints(endpoints: Sequence[AppEndpoint], *, timeout: float = 1.0) -> list[AppEndpoint]:
     if not endpoints:
         return []
     with ThreadPoolExecutor(max_workers=min(8, len(endpoints))) as pool:
-        return list(pool.map(probe_endpoint, endpoints))
-
-
-_DEVICE_READ_TOOLS = {"list_sessions", "get_session", "read_session_events"}
-_DEVICE_PROCESS_TOOLS = {"get_process_identity"}
+        return list(pool.map(lambda e: probe_endpoint(resolve_endpoint(e), timeout=timeout), endpoints))
 
 
 def _endpoint_label(endpoint: AppEndpoint) -> str:
@@ -124,18 +146,11 @@ def _resolve_device(
     )
 
 
-def _device_client(endpoint: AppEndpoint, tool_name: str | None = None) -> MCPHTTPClient:
-    if endpoint.primary_address != "127.0.0.1" or endpoint.mcp_url != endpoint.base_url + "/api/mcp":
-        raise UsageError("idh: a device credential is only sent to a 127.0.0.1 forward")
-    variable = (
-        "IDH_DEVICE_SESSION_TOKEN"
-        if tool_name is None or tool_name in _DEVICE_READ_TOOLS
-        else "IDH_PROCESS_TOKEN"
-    )
-    token = os.environ.get(variable, "").strip()
-    if not token or not token.isascii() or any(character.isspace() for character in token):
-        raise UsageError(f"idh: set {variable} before calling the device")
-    return MCPHTTPClient(endpoint, bearer_token=token)
+def _device_client(endpoint: AppEndpoint) -> MCPHTTPClient:
+    endpoint = resolve_endpoint(endpoint)
+    if endpoint.mcp_url != endpoint.base_url + "/api/mcp":
+        raise UsageError("idh: the device endpoint does not expose a session MCP URL")
+    return MCPHTTPClient(endpoint)
 
 
 def _serve_device_session(endpoint: AppEndpoint) -> int:
@@ -151,13 +166,10 @@ def _serve_device_session(endpoint: AppEndpoint) -> int:
         params = message.get("params") if isinstance(message, dict) else None
         name = params.get("name") if isinstance(params, dict) else None
         try:
-            chosen = client
-            if method == "tools/call" and isinstance(name, str) and name not in _DEVICE_READ_TOOLS:
-                chosen = _device_client(endpoint, name)
-            reply = chosen.send(message)
+            reply = client.send(message)
             if method == "initialize" and isinstance(reply, dict) and "error" not in reply:
                 if reply.get("result", {}).get("serverInfo", {}).get("name") != "idhjd":
-                    raise MCPTransportError("expected the paired device session service")
+                    raise MCPTransportError("expected the device session service")
             return reply
         except (MCPTransportError, UsageError) as error:
             if identity is None:
@@ -195,7 +207,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     connect = subparsers.add_parser("connect", help="save and connect a device address")
-    connect.add_argument("endpoint", nargs="?", help="device address, e.g. 192.168.100.65:8088")
+    connect.add_argument("endpoint", nargs="?", help="device address (192.168.100.65:8088), usb, or usb:<udid>")
     connect.add_argument("--timeout", type=float, default=PROBE_TIMEOUT, help="HTTP probe timeout in seconds")
     connect.add_argument("--force", action="store_true", help="save the address even when the device is unreachable")
     connect.add_argument("--json", action="store_true", help="output JSON")
@@ -220,7 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp = subparsers.add_parser("mcp", help="start the stdio MCP gateway")
     mcp.add_argument("--target", help="transparent proxy to one app; omit for the aggregate gateway")
-    mcp.add_argument("--device-session", action="store_true", help="connect to the paired device session service over a loopback forward")
+    mcp.add_argument("--device-session", action="store_true", help="connect to the device session service over a loopback forward")
     _add_endpoint_options(mcp)
 
     call = subparsers.add_parser("call", help="call an MCP tool on a device (defaults to the only online device)")
@@ -313,11 +325,14 @@ def _run_connect(args: argparse.Namespace) -> int:
             _print_inventory(data)
         return 0
     try:
-        endpoint = AppEndpoint.from_url(args.endpoint)
+        if args.endpoint == "usb" or args.endpoint.startswith("usb:"):
+            endpoint = _pick_usb_endpoint(args.endpoint[4:] or None)
+        else:
+            endpoint = AppEndpoint.from_url(args.endpoint)
     except ValueError as exc:
         print(f"idh: {exc}", file=sys.stderr)
         return 2
-    probed = probe_endpoint(endpoint, timeout=max(0.1, args.timeout))
+    probed = probe_endpoint(resolve_endpoint(endpoint), timeout=max(0.1, args.timeout))
     online = probed.properties.get("status") == "online"
     if not online and not args.force:
         print(
@@ -372,13 +387,27 @@ def _run_disconnect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _usb_available(endpoints: Sequence[AppEndpoint]) -> list[dict]:
+    saved = {endpoint.properties.get("usb_udid") for endpoint in endpoints}
+    try:
+        devices = usbmux_devices(timeout=1.0)
+    except UsbMuxError:
+        return []
+    return [device for device in devices if device["udid"] not in saved]
+
+
 def _run_devices(args: argparse.Namespace) -> int:
     endpoints = _manual_endpoints(args.endpoint, include_saved=not args.no_saved)
     data = inventory(endpoints)
+    available = _usb_available(endpoints)
     if args.json:
+        if available:
+            data["usb_available"] = available
         print(json.dumps(data, ensure_ascii=False, indent=2))
     else:
         _print_inventory(data)
+        for device in available:
+            print(f"  [usb] {device['udid']}  (connect: idh connect usb:{device['udid']})")
     return 0
 
 
@@ -399,25 +428,6 @@ def _run_tools(args: argparse.Namespace) -> int:
         if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
             print("idh: invalid tools/list response", file=sys.stderr)
             return 1
-        if endpoint.kind == "device":
-            result = {
-                **result,
-                "tools": [tool for tool in result["tools"] if tool.get("name") in _DEVICE_READ_TOOLS]
-                + [
-                    {
-                        "name": "get_process_identity",
-                        "description": "Read one live process. Requires IDH_PROCESS_TOKEN.",
-                        "inputSchema": {
-                            "type": "object",
-                            "required": ["bundleId"],
-                            "properties": {
-                                "bundleId": {"type": "string"},
-                                "processGeneration": {"type": "string"},
-                            },
-                        },
-                    }
-                ],
-            }
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except UsageError as exc:
@@ -507,7 +517,7 @@ def _run_call(args: argparse.Namespace) -> int:
         return 2
     try:
         client = (
-            _device_client(endpoint, args.tool_name)
+            _device_client(endpoint)
             if endpoint.kind == "device"
             else MCPHTTPClient(endpoint)
         )
@@ -797,25 +807,37 @@ def _run_auto_update(args: argparse.Namespace) -> None:
 
 
 _PANEL_SESSION_ROUTE = re.compile(r"/api/sessions(?:/[A-Za-z0-9_-]{1,64}(?:/events)?)?")
+_PANEL_APP_EVENTS_ROUTE = re.compile(r"/api/apps/[A-Za-z0-9][A-Za-z0-9._-]{0,254}/events")
+_PANEL_APP_ICON_ROUTE = re.compile(r"/api/apps/[A-Za-z0-9][A-Za-z0-9._-]{0,254}/icon")
 _PANEL_SETTINGS_ROUTE = "/api/session-settings"
 _PANEL_SETTINGS_MAX_BYTES = 4096
+# 设备侧注入接口（GET 读 / POST 写）与本机设备注册表
+_PANEL_DEVICE_READ = {"/api/apps", "/api/injection-scope"}
+_PANEL_DEVICE_WRITE = {"/api/injection-scope", "/api/apps/relaunch", "/api/apps/clear"}
+_PANEL_DEVICES_ROUTE = "/api/devices"
+_BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}")
 
 
 def _panel_request(
-    endpoint: AppEndpoint, path: str, token: str = "", *, body: bytes | None = None
+    endpoint: AppEndpoint, path: str, *, body: bytes | None = None
 ) -> tuple[int, object]:
-    if endpoint.primary_address != "127.0.0.1":
-        raise UsageError("idh: the computer page only talks to a 127.0.0.1 forward")
+    endpoint = resolve_endpoint(endpoint)
     headers = {"Accept": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
     if body is not None:
         headers["Content-Type"] = "application/json"
-    with contextlib.closing(HTTPConnection("127.0.0.1", endpoint.port, timeout=3)) as connection:
+    with contextlib.closing(HTTPConnection(endpoint.primary_address, endpoint.port, timeout=3)) as connection:
         connection.request("GET" if body is None else "POST", path, body=body, headers=headers)
         response = connection.getresponse()
         payload = response.read() if response.status == 200 or path == _PANEL_SETTINGS_ROUTE else b""
         return response.status, json.loads(payload) if payload else None
+
+
+def _panel_blob(endpoint: AppEndpoint, path: str) -> tuple[int, bytes]:
+    endpoint = resolve_endpoint(endpoint)
+    with contextlib.closing(HTTPConnection(endpoint.primary_address, endpoint.port, timeout=3)) as connection:
+        connection.request("GET", path, headers={"Accept": "image/png"})
+        response = connection.getresponse()
+        return response.status, response.read() if response.status == 200 else b""
 
 
 def _run_panel(args: argparse.Namespace) -> int:
@@ -824,10 +846,14 @@ def _run_panel(args: argparse.Namespace) -> int:
     endpoints = _manual_endpoints(args.endpoint, include_saved=not args.no_saved)
     try:
         endpoint = _resolve_device(endpoints, None, command="panel")
-    except SystemExit as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    if endpoint.kind != "device":
+    except SystemExit:
+        # 多设备在线不报错退出：取第一台在线设备，页面里可切换
+        endpoint = next(
+            (e for e in _probed_endpoints(endpoints)
+             if e.kind == "device" and e.properties.get("status") == "online"),
+            None,
+        )  # 零设备时为 None：面板照常起，由页面里的设备入口添加
+    if endpoint is not None and endpoint.kind != "device":
         print("idh: panel serves a device connection", file=sys.stderr)
         return 2
     host, _, port_text = args.bind.rpartition(":")
@@ -839,17 +865,53 @@ def _run_panel(args: argparse.Namespace) -> int:
     except ValueError:
         print("idh: --bind must use 127.0.0.1 or localhost and a valid port", file=sys.stderr)
         return 2
+    saved_selected = load_selected() if not args.no_saved and not args.endpoint else ""
+    if saved_selected:
+        for saved in load_saved_endpoints():
+            if saved.mcp_url.casefold() == saved_selected.casefold() and saved.kind == "device":
+                endpoint = saved
+                break
+    current = {"endpoint": endpoint}
+
+    def device_pool() -> list[AppEndpoint]:
+        merged = {e.mcp_url.casefold(): e for e in endpoints}
+        for entry in load_saved_endpoints():
+            if entry.kind == "device":
+                merged[entry.mcp_url.casefold()] = entry
+        return list(merged.values())
+
+    def device_records() -> dict:
+        saved = device_pool()
+        probed = [item for item in _probed_endpoints(saved, timeout=3.0) if item.kind != "app"]
+        selected = current["endpoint"].mcp_url if current["endpoint"] else ""
+        return {
+            "devices": [
+                {
+                    "id": item.mcp_url,
+                    "address": item.base_url,
+                    "kind": item.kind,
+                    "transport": item.properties.get("transport"),
+                    "online": item.properties.get("status") == "online",
+                    "selected": item.mcp_url == selected,
+                }
+                for item in probed
+            ],
+            "usb": [device["udid"] for device in _usb_available(saved)],
+            "selected": selected,
+        }
+
     try:
-        code, health = _panel_request(endpoint, "/health")
-        if code != 200 or not isinstance(health, dict) or health.get("service") != "idhjd":
-            raise UsageError("idh: panel serves a device connection")
+        if current["endpoint"] is not None:
+            code, health = _panel_request(current["endpoint"], "/health")
+            if code != 200 or not isinstance(health, dict) or health.get("service") != "idhjd":
+                raise UsageError("idh: panel serves a device connection")
         panel_files = files("idh")
-        metadata = f'<meta name="idh-device-endpoint" content="{endpoint.base_url}">'.encode()
+        device_url = current["endpoint"].base_url if current["endpoint"] else ""
+        metadata = f'<meta name="idh-device-endpoint" content="{device_url}">'.encode()
         page = panel_files.joinpath("panel.html").read_bytes().replace(
             b"<!-- IDH_DEVICE_ENDPOINT -->", metadata
         )
         assets = {
-            "/panel-device.js": (panel_files.joinpath("panel-device.js").read_bytes(), "text/javascript; charset=utf-8"),
             "/wechat-follow.png": (panel_files.joinpath("wechat-follow.png").read_bytes(), "image/png"),
         }
     except (HTTPException, OSError, ValueError, UsageError) as exc:
@@ -881,14 +943,12 @@ def _run_panel(args: argparse.Namespace) -> int:
             self.write_body(code, json.dumps(data).encode(), "application/json")
 
         def relay_settings(self, body: bytes | None = None) -> None:
-            token = os.environ.get("IDH_DEVICE_SETTINGS_TOKEN", "").strip()
-            if not token and body is None:
-                token = os.environ.get("IDH_DEVICE_SESSION_TOKEN", "").strip()
-            if not token:
-                self.write_json(401, {"error": "settings_pairing_required"})
+            endpoint = current["endpoint"]
+            if not endpoint:
+                self.write_json(502, {"error": "device_unavailable"})
                 return
             try:
-                code, data = _panel_request(endpoint, _PANEL_SETTINGS_ROUTE, token, body=body)
+                code, data = _panel_request(endpoint, _PANEL_SETTINGS_ROUTE, body=body)
             except (HTTPException, OSError, ValueError, UsageError):
                 self.write_json(502, {"error": "device_unavailable"})
                 return
@@ -897,11 +957,64 @@ def _run_panel(args: argparse.Namespace) -> int:
                 return
             self.write_json(code, data if isinstance(data, dict) else {"error": "settings_unavailable"})
 
+        def device_action(self, body: bytes) -> None:
+            try:
+                request = json.loads(body)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                request = None
+            if not isinstance(request, dict):
+                self.write_json(400, {"error": "invalid_device_request"})
+                return
+            action = request.get("action")
+            if action == "add":
+                udid = request.get("usb")
+                try:
+                    if udid:
+                        endpoint = _pick_usb_endpoint(str(udid))
+                    else:
+                        endpoint = AppEndpoint.from_url(str(request.get("address") or ""))
+                except ValueError:
+                    self.write_json(400, {"error": "invalid_address"})
+                    return
+                probed = probe_endpoint(resolve_endpoint(endpoint), timeout=3)
+                if probed.properties.get("status") == "online" and probed.kind != "device":
+                    self.write_json(400, {"error": "not_a_device"})
+                    return
+                save_endpoint(probed)
+                self.write_json(200, device_records())
+                return
+            target = str(request.get("id") or "")
+            if action == "select":
+                for entry in device_pool():
+                    if entry.mcp_url.casefold() == target.casefold():
+                        if any(e.mcp_url.casefold() == target.casefold() for e in load_saved_endpoints()):
+                            save_selected(entry.mcp_url)
+                        current["endpoint"] = entry
+                        self.write_json(200, device_records())
+                        return
+                self.write_json(404, {"error": "unknown_device"})
+                return
+            if action == "remove":
+                try:
+                    removed = remove_endpoint(target)
+                except ValueError:
+                    removed = False
+                if not removed:
+                    self.write_json(404, {"error": "unknown_device"})
+                    return
+                if current["endpoint"] and current["endpoint"].mcp_url.casefold() == target.casefold():
+                    save_selected(next((e.mcp_url for e in load_saved_endpoints() if e.kind == "device"), ""))
+                    current["endpoint"] = next((e for e in load_saved_endpoints() if e.kind == "device"), None)
+                self.write_json(200, device_records())
+                return
+            self.write_json(400, {"error": "invalid_device_request"})
+
         def do_POST(self) -> None:
             if not self.valid_host():
                 self.send_error(400)
                 return
-            if self.path != _PANEL_SETTINGS_ROUTE:
+            allowed = {_PANEL_SETTINGS_ROUTE, _PANEL_DEVICES_ROUTE} | _PANEL_DEVICE_WRITE
+            if self.path not in allowed:
                 self.send_error(404)
                 return
             if self.headers.get_all("Origin") != [f"http://{self.headers['Host']}"]:
@@ -925,7 +1038,44 @@ def _run_panel(args: argparse.Namespace) -> int:
             if len(body) != length:
                 self.write_json(400, {"error": "incomplete_settings"})
                 return
-            self.relay_settings(body)
+            if self.path == _PANEL_SETTINGS_ROUTE:
+                self.relay_settings(body)
+                return
+            if self.path == _PANEL_DEVICES_ROUTE:
+                self.device_action(body)
+                return
+            endpoint = current["endpoint"]
+            if not endpoint:
+                self.write_json(502, {"error": "device_unavailable"})
+                return
+            try:
+                request = json.loads(body)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                request = None
+            if not isinstance(request, dict):
+                self.write_json(400, {"error": "invalid_request"})
+                return
+            if self.path in {"/api/apps/relaunch", "/api/apps/clear"}:
+                bundle = str(request.get("bundleId") or "")
+                if not _BUNDLE_ID.fullmatch(bundle) or bundle.startswith("com.apple."):
+                    self.write_json(400, {"error": "invalid_bundle_id"})
+                    return
+            else:
+                ids = [request.get(key, []) for key in ("add", "remove")]
+                if any(not isinstance(value, list) or len(value) > 256 or
+                       any(not _BUNDLE_ID.fullmatch(str(item)) for item in value)
+                       for value in ids):
+                    self.write_json(400, {"error": "invalid_bundle_id"})
+                    return
+            try:
+                code, data = _panel_request(endpoint, self.path, body=body)
+            except (HTTPException, OSError, ValueError, UsageError):
+                self.write_json(502, {"error": "device_unavailable"})
+                return
+            if code not in {200, 400, 401, 403, 404, 409, 500}:
+                self.write_json(502, {"error": "device_unavailable"})
+                return
+            self.write_json(code, data if isinstance(data, dict) else {"error": "device_unavailable"})
 
         def do_GET(self) -> None:
             if not self.valid_host():
@@ -933,6 +1083,9 @@ def _run_panel(args: argparse.Namespace) -> int:
                 return
             if self.path == _PANEL_SETTINGS_ROUTE:
                 self.relay_settings()
+                return
+            if self.path == _PANEL_DEVICES_ROUTE:
+                self.write_json(200, device_records())
                 return
             try:
                 target = urlsplit(self.path)
@@ -945,20 +1098,34 @@ def _run_panel(args: argparse.Namespace) -> int:
             session_route = _PANEL_SESSION_ROUTE.fullmatch(target.path) and (
                 not target.query or target.path.endswith("/events")
             )
+            app_events_route = _PANEL_APP_EVENTS_ROUTE.fullmatch(target.path)
             if not target.query and target.path in {"/", "/index.html"}:
                 body = page
                 kind = "text/html; charset=utf-8"
             elif not target.query and target.path in assets:
                 body, kind = assets[target.path]
-            elif session_route or self.path == "/health":
-                token = ""
-                if session_route:
-                    token = os.environ.get("IDH_DEVICE_SESSION_TOKEN", "").strip()
-                    if not token:
-                        self.send_error(401)
-                        return
+            elif not target.query and _PANEL_APP_ICON_ROUTE.fullmatch(target.path):
+                if current["endpoint"] is None:
+                    self.send_error(502)
+                    return
                 try:
-                    code, data = _panel_request(endpoint, self.path, token)
+                    code, blob = _panel_blob(current["endpoint"], self.path)
+                except (HTTPException, OSError, ValueError, UsageError):
+                    self.send_error(502)
+                    return
+                if code != 200 or not blob:
+                    self.send_error(404)
+                    return
+                self.write_body(200, blob, "image/png")
+                return
+            elif session_route or app_events_route or self.path == "/health" or (
+                not target.query and target.path in _PANEL_DEVICE_READ
+            ):
+                if current["endpoint"] is None:
+                    self.send_error(502)
+                    return
+                try:
+                    code, data = _panel_request(current["endpoint"], self.path)
                 except (HTTPException, OSError, ValueError, UsageError):
                     self.send_error(502)
                     return
@@ -990,6 +1157,11 @@ def _run_panel(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     parser = build_parser()
     args = parser.parse_args(_normalize_argv(sys.argv[1:] if argv is None else argv))
     try:

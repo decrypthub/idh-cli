@@ -24,17 +24,11 @@ class DeviceHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path, _, query = self.path.partition("?")
         if path == "/api/session-settings":
-            if self.headers.get("Authorization") not in {"Bearer panel-key", "Bearer settings-key"}:
-                self._send(401, b'{"error":"settings_pairing_required"}')
-            else:
-                self._send(200, json.dumps({
-                    "ok": True, "revision": self.revision, "deviceSession": self.limits,
-                }).encode())
+            self._send(200, json.dumps({
+                "ok": True, "revision": self.revision, "deviceSession": self.limits,
+            }).encode())
             return
         if path == "/api/sessions" or path.startswith("/api/sessions/"):
-            if self.headers.get("Authorization") != "Bearer panel-key":
-                self._send(401, b"")
-                return
             session = {"sessionId": PANEL_SESSION_ID, "bundleId": "com.example.fixture", "count": 40}
             if path == "/api/sessions":
                 payload = {"ok": True, "sessions": [session]}
@@ -58,9 +52,7 @@ class DeviceHandler(BaseHTTPRequestHandler):
         message = json.loads(self.rfile.read(length) or b"{}")
         if self.path == "/api/session-settings":
             self.settings_posts.append(message)
-            if self.headers.get("Authorization") != "Bearer settings-key":
-                self._send(401, b'{"error":"settings_pairing_required"}')
-            elif message["revision"] != self.revision:
+            if message["revision"] != self.revision:
                 self._send(409, b'{"error":"revision_conflict"}')
             else:
                 DeviceHandler.limits = {**self.limits, **message["deviceSession"]}
@@ -127,37 +119,34 @@ def device_url() -> str:
         thread.join()
 
 
-def test_empty_device_still_reads_authorized_history(
-    device_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_empty_device_still_reads_history(
+    device_url: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("IDH_DEVICE_SESSION_TOKEN", "secret")
     code = main(
         ["call", "list_sessions", "--endpoint", device_url, "--no-saved", "--json"]
     )
     assert code == 0, capsys.readouterr().err
     output = json.loads(capsys.readouterr().out)
     assert output["structuredContent"]["sessions"][0]["sessionId"] == "saved"
-    assert DeviceHandler.authorization[0] == "Bearer secret"
+    assert DeviceHandler.authorization and set(DeviceHandler.authorization) == {None}
 
 
-def test_revoked_pairing_is_not_an_empty_history(
-    device_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_device_error_is_not_an_empty_history(
+    device_url: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     DeviceHandler.status_code = 401
-    monkeypatch.setenv("IDH_DEVICE_SESSION_TOKEN", "secret")
     code = main(["call", "list_sessions", "--endpoint", device_url, "--no-saved", "--json"])
     assert code == 1
     assert "401" in capsys.readouterr().err
 
 
-def test_device_tools_keep_only_session_reads(
-    device_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_device_tools_returns_device_list(
+    device_url: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("IDH_DEVICE_SESSION_TOKEN", "secret")
     code = main(["tools", "--endpoint", device_url, "--no-saved", "--json"])
     assert code == 0, capsys.readouterr().err
     names = [tool["name"] for tool in json.loads(capsys.readouterr().out)["tools"]]
-    assert names == ["list_sessions", "get_process_identity"]
+    assert names == ["list_sessions", "disassemble"]
 
 
 def test_status_lists_a_device_with_no_apps(device_url: str, capsys: pytest.CaptureFixture[str]) -> None:
@@ -176,7 +165,6 @@ def test_two_devices_require_an_address(
     thread = threading.Thread(target=extra.serve_forever, daemon=True)
     thread.start()
     other = f"http://127.0.0.1:{extra.server_port}"
-    monkeypatch.setenv("IDH_DEVICE_SESSION_TOKEN", "secret")
     try:
         code = main(
             ["call", "list_sessions", "--endpoint", device_url, "--endpoint", other, "--no-saved"]
@@ -189,70 +177,26 @@ def test_two_devices_require_an_address(
         thread.join()
 
 
-def test_process_identity_uses_a_separate_token(
-    device_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_device_calls_send_no_credential(
+    device_url: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("IDH_DEVICE_SESSION_TOKEN", "session-token")
-    monkeypatch.setenv("IDH_PROCESS_TOKEN", "process-token")
-    code = main(
-        [
-            "call",
-            "get_process_identity",
-            "--endpoint",
-            device_url,
-            "--no-saved",
-            "--json",
-            "--arguments",
-            '{"bundleId": "com.example.app"}',
-        ]
-    )
-    assert code == 0, capsys.readouterr().err
-    assert set(DeviceHandler.authorization) == {"Bearer process-token"}
-
-    DeviceHandler.authorization = []
-    code = main(["call", "list_sessions", "--endpoint", device_url, "--no-saved", "--json"])
-    assert code == 0, capsys.readouterr().err
-    assert set(DeviceHandler.authorization) == {"Bearer session-token"}
-
-
-def test_session_token_is_not_sent_for_process_identity(
-    device_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setenv("IDH_DEVICE_SESSION_TOKEN", "session-token")
-    monkeypatch.delenv("IDH_PROCESS_TOKEN", raising=False)
-    code = main(
-        ["call", "get_process_identity", "--endpoint", device_url, "--no-saved", "--json"]
-    )
-    assert code == 2
-    assert "IDH_PROCESS_TOKEN" in capsys.readouterr().err
-    assert DeviceHandler.authorization == []
-
-
-def test_forwarded_tool_uses_the_process_token(
-    device_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setenv("IDH_PROCESS_TOKEN", "process-token")
-    code = main(
-        [
-            "call",
-            "disassemble",
-            "--endpoint",
-            device_url,
-            "--no-saved",
-            "--json",
-            "--arguments",
-            '{"bundleId": "com.example.app", "address": "0x1"}',
-        ]
-    )
-    assert code == 0, capsys.readouterr().err
-    assert set(DeviceHandler.authorization) == {"Bearer process-token"}
+    for tool, arguments in (
+        ("get_process_identity", '{"bundleId": "com.example.app"}'),
+        ("list_sessions", None),
+        ("disassemble", '{"bundleId": "com.example.app", "address": "0x1"}'),
+    ):
+        DeviceHandler.authorization = []
+        command = ["call", tool, "--endpoint", device_url, "--no-saved", "--json"]
+        if arguments is not None:
+            command += ["--arguments", arguments]
+        code = main(command)
+        assert code == 0, capsys.readouterr().err
+        assert set(DeviceHandler.authorization) == {None}
 
 
 def test_panel_reads_history_independently_of_online_apps(
     device_url: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("IDH_DEVICE_SESSION_TOKEN", "panel-key")
-    monkeypatch.delenv("IDH_DEVICE_SETTINGS_TOKEN", raising=False)
     panel_servers: Queue[ThreadingHTTPServer] = Queue()
     serve_forever = ThreadingHTTPServer.serve_forever
 
@@ -269,11 +213,11 @@ def test_panel_reads_history_independently_of_online_apps(
     try:
         with urlopen(base + "/", timeout=3) as response:
             page = response.read().decode()
-            assert "id='idh-session'" in page and "id='tabbar'" in page
-            assert "class='splitter'" in page and 'class="hdr-raven"' in page
-            assert "panel-key" not in page
-        with urlopen(base + "/panel-device.js", timeout=3) as response:
-            assert b"IDHDevicePanel" in response.read()
+            assert 'id="app"' in page
+            assert 'name="idh-device-endpoint"' in page and device_url in page
+        with pytest.raises(HTTPError) as error:
+            urlopen(base + "/panel-device.js", timeout=3)
+        assert error.value.code == 404
         with urlopen(base + "/wechat-follow.png", timeout=3) as response:
             assert response.read(8) == b"\x89PNG\r\n\x1a\n"
         with urlopen(base + "/health", timeout=3) as response:
@@ -291,27 +235,17 @@ def test_panel_reads_history_independently_of_online_apps(
             with pytest.raises(HTTPError) as error:
                 urlopen(base + path, timeout=3)
             assert error.value.code == 404
-        monkeypatch.setenv("IDH_DEVICE_SESSION_TOKEN", "revoked")
-        for address in (base + "/api/sessions", detail, detail + "/events"):
-            with pytest.raises(HTTPError) as error:
-                urlopen(address, timeout=3)
-            assert error.value.code == 401
         with urlopen(base + "/health", timeout=3) as response:
             assert json.load(response)["ok"] is True
         with pytest.raises(HTTPError) as error:
             urlopen(Request(base + "/api/sessions", headers={"Host": "unknown.example"}), timeout=3)
         assert error.value.code == 400
         settings = base + "/api/session-settings"
-        monkeypatch.setenv("IDH_DEVICE_SESSION_TOKEN", "panel-key")
         with urlopen(settings, timeout=3) as response:
             config = json.load(response)
         assert config["deviceSession"] == DeviceHandler.limits
         data = json.dumps({"revision": config["revision"], "deviceSession": {"maxRecords": 8}}).encode()
         headers = {"Content-Type": "application/json", "Origin": base}
-        with pytest.raises(HTTPError) as error:
-            urlopen(Request(settings, data=data, headers=headers), timeout=3)
-        assert error.value.code == 401 and DeviceHandler.settings_posts == []
-        monkeypatch.setenv("IDH_DEVICE_SETTINGS_TOKEN", "settings-key")
         with pytest.raises(HTTPError) as error:
             urlopen(Request(settings, data=data, headers={**headers, "Origin": "http://unknown.example"}), timeout=3)
         assert error.value.code == 403 and DeviceHandler.settings_posts == []
@@ -327,7 +261,7 @@ def test_panel_reads_history_independently_of_online_apps(
         thread.join(timeout=5)
 
 
-def test_panel_refuses_a_lan_address(
+def test_panel_accepts_a_lan_address(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def online(endpoint, timeout=1.0):
@@ -335,20 +269,21 @@ def test_panel_refuses_a_lan_address(
 
     monkeypatch.setattr("idh.cli.probe_endpoint", online)
     code = main(["panel", "--endpoint", "http://10.0.0.8:8088", "--no-saved"])
+    # 不可达是传输错误，不再被「只允许 127.0.0.1 转发」拦下
     assert code == 2
-    assert "127.0.0.1" in capsys.readouterr().err
+    assert "127.0.0.1" not in capsys.readouterr().err
 
 
-def test_device_credential_is_not_sent_to_a_lan_address(
+def test_lan_address_is_used_directly(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def online(endpoint, timeout=1.0):
         return endpoint.with_kind("device").with_properties({"status": "online", "app_count": "0"})
 
     monkeypatch.setattr("idh.cli.probe_endpoint", online)
-    monkeypatch.setenv("IDH_DEVICE_SESSION_TOKEN", "secret")
     code = main(
         ["call", "10.0.0.8:8088", "list_sessions", "--endpoint", "http://10.0.0.8:8088", "--no-saved"]
     )
-    assert code == 2
-    assert "127.0.0.1" in capsys.readouterr().err
+    # 不可达是传输错误，不再被「只允许 127.0.0.1 转发」拦下
+    assert code == 1
+    assert "127.0.0.1" not in capsys.readouterr().err
