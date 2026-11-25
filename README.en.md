@@ -208,32 +208,23 @@ Logs go to stderr. stdout is reserved for line-delimited JSON-RPC stdio messages
 
 ## On-device jailbreak sessions
 
-Enable sessions in IOSDecryptHub Manager and copy its read-only credential.
-Forward the device service to 127.0.0.1 and set IDH_DEVICE_SESSION_TOKEN.
-`mcp`, `call`, and `tools` share that device connection. The credential is sent
-only to 127.0.0.1.
+`idhjd` binds only to the device loopback `127.0.0.1:8088` and has no custom authentication — the same trust model as frida-server, where the transport provides the trust boundary:
 
-Use `idh panel` to open the original workbench on the computer.
-To edit session limits under Settings, copy the separate device settings
-credential in Manager and pass it to the panel process as
-`IDH_DEVICE_SETTINGS_TOKEN`. The read-only credential cannot save settings.
-Changes persist on the device and apply to the next session.
+- **USB**: `idh connect usb` (or `usb:<udid>`) connects through usbmuxd; plugging in the cable is the authorization, like `frida -U`. `IDH_USBMUXD` may point at another host (`host:port`) or a unix socket such as an SSH-forwarded macOS `/var/run/usbmuxd`.
+- **SSH forwarding**: run `ssh -L 8088:127.0.0.1:8088 root@<device>` and then `idh connect 127.0.0.1:8088`.
+- **LAN**: a root-created `/private/var/db/idhjd-v1/listen-remote` plus an idhjd restart makes it bind `0.0.0.0`, like `frida-server -l`; then use `idh connect <device IP>:8088`. This is off by default.
 
-~~~sh
-idh mcp --endpoint http://127.0.0.1:8088
-idh call list_sessions --endpoint http://127.0.0.1:8088
-~~~
+```bash
+idh connect usb
+idh mcp --endpoint usb
+idh call list_sessions --endpoint usb:<udid>
+```
 
-`idh mcp --device-session` remains an alias for an older package that has no
-`/health`. With several connections, select one by address or connection id.
-An app still uses its bundle.
+`idh mcp --device-session --endpoint <endpoint>` remains an alias. With several connections, select one by address or connection id. An app still uses its bundle.
 
-The three read-only tools can read retained summaries after the app exits.
-Turning session mode off revokes that credential, and later reads fail. Pair again
-and refresh the credential after a service restart.
-`get_process_identity` uses `IDH_PROCESS_TOKEN` instead of the session credential,
-and that token is also sent only to `127.0.0.1`. Pass `processGeneration` when one
-app has more than one live process.
+After a target app exits, read-only tools can still read retained summaries. `get_process_identity` needs `processGeneration` when one app has more than one live process.
+
+`idh panel` opens the computer-side workbench. It selects a device first and then an app. Besides events and injection scope, it uses the device proxy to reach the live process file, symbol, and Dump endpoints. File and image downloads are relayed by the local panel; unavailable devices or offline processes produce explicit errors rather than simulated data.
 
 ## Connection status
 
