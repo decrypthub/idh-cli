@@ -865,7 +865,7 @@ def _run_panel(args: argparse.Namespace) -> int:
     except ValueError:
         print("idh: --bind must use 127.0.0.1 or localhost and a valid port", file=sys.stderr)
         return 2
-    saved_selected = load_selected()
+    saved_selected = load_selected() if not args.no_saved and not args.endpoint else ""
     if saved_selected:
         for saved in load_saved_endpoints():
             if saved.mcp_url.casefold() == saved_selected.casefold() and saved.kind == "device":
