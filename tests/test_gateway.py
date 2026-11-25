@@ -17,7 +17,7 @@ from idh.gateway import (
     resolve_live_target,
     serve_stdio,
 )
-from idh.http_mcp import MCPHTTPClient
+from idh.http_mcp import MCPHTTPClient, MCPTransportError
 from idh.models import AppEndpoint
 
 
@@ -132,6 +132,43 @@ def test_http_client_preserves_session_and_notifications(remote_endpoint: AppEnd
     assert response["id"] == 1
     assert client.session_id == "test-session"
     assert client.send({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+
+
+def test_http_client_does_not_follow_redirects() -> None:
+    hits: list[str] = []
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            hits.append(self.path)
+            if self.path == "/api/mcp":
+                self.send_response(302)
+                self.send_header("Location", "/other")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        endpoint = AppEndpoint.from_url(f"http://127.0.0.1:{server.server_port}")
+        client = MCPHTTPClient(endpoint)
+        with pytest.raises(MCPTransportError, match="MCP HTTP 302"):
+            client.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        assert hits == ["/api/mcp"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_live_target_probes_and_filters_offline(remote_endpoint: AppEndpoint) -> None:

@@ -4,7 +4,7 @@ import json
 from dataclasses import replace
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from . import __version__
 from .models import AppEndpoint
@@ -20,6 +20,9 @@ class _NoRedirects(HTTPRedirectHandler):
         return None
 
 
+_DIRECT_OPEN = build_opener(ProxyHandler({}), _NoRedirects()).open
+
+
 class MCPHTTPClient:
     def __init__(
         self, endpoint: AppEndpoint, *, timeout: float = 15.0, bearer_token: str | None = None
@@ -29,7 +32,7 @@ class MCPHTTPClient:
         self.session_id: str | None = None
         self.initialized = False
         self._bearer_token = bearer_token
-        self._open = build_opener(ProxyHandler({}), _NoRedirects()).open if bearer_token else urlopen
+        self._open = _DIRECT_OPEN
 
     def update_endpoint(self, endpoint: AppEndpoint) -> None:
         if endpoint.mcp_url != self.endpoint.mcp_url:
@@ -102,7 +105,7 @@ def _get_json(url: str, timeout: float) -> Any | None:
         method="GET",
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with _DIRECT_OPEN(request, timeout=timeout) as response:
             return json.loads(response.read())
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
         return None
