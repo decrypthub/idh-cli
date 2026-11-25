@@ -36,6 +36,44 @@ export const scopeUpdate = (bundleId: string, on: boolean) =>
   api<{ scope?: string[]; error?: string }>('/api/injection-scope',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [on ? 'add' : 'remove']: [bundleId] }) });
 export const relaunchApp = (bundleId: string) => post('/api/apps/relaunch', { bundleId });
+
+// 进程工具接口：本机面板中转 /api/apps/<bundle>/tools/...，设备 idhjd 再代理到在线进程。
+const toolPath = (bundleId: string, path: string) =>
+  `/api/apps/${encodeURIComponent(bundleId)}/tools/${path}`;
+
+export interface FileEntry { name: string; type: 'dir' | 'file'; size?: number; mtime?: number }
+export interface FileList { path?: string; parent?: string | null; entries?: FileEntry[]; error?: string }
+export interface FilePreview { path?: string; size?: number; truncated?: boolean; format?: 'text' | 'hex'; text?: string; error?: string }
+export const listFiles = (bundleId: string, path = '') =>
+  api<FileList>(`${toolPath(bundleId, 'files')}?path=${encodeURIComponent(path)}`);
+export const readFilePreview = (bundleId: string, path: string) =>
+  api<FilePreview>(`${toolPath(bundleId, 'files/preview')}?path=${encodeURIComponent(path)}&limit=65536`);
+export const fileDownloadUrl = (bundleId: string, path: string) =>
+  `${toolPath(bundleId, 'files/download')}?path=${encodeURIComponent(path)}`;
+
+export interface SymbolImage { idx: number; name: string; main?: boolean; imports?: number }
+export interface SymbolImages { images?: SymbolImage[]; error?: string }
+export interface SymbolRows { idx?: number; name?: string; total?: number; shown?: number; symbols?: string[]; error?: string }
+export const listSymbolImages = (bundleId: string) => api<SymbolImages>(toolPath(bundleId, 'symbols/images'));
+export const listSymbols = (bundleId: string, img: number, q = '', limit = 300) =>
+  api<SymbolRows>(`${toolPath(bundleId, 'symbols')}?img=${img}&q=${encodeURIComponent(q)}&limit=${limit}`);
+
+export interface DumpImage { name: string; kind?: string; cryptid?: number; encrypted?: boolean; size?: number }
+export interface DumpImages { images?: DumpImage[]; encryptedCount?: number; total?: number; error?: string }
+export interface DumpStatus {
+  state?: 'idle' | 'running' | 'done' | 'error'; mode?: string; progress?: number; stage?: string;
+  error?: string; binReady?: boolean; ipaReady?: boolean; binName?: string; ipaName?: string;
+}
+export const getDumpImages = (bundleId: string) => api<DumpImages>(toolPath(bundleId, 'dump/images'));
+export const getDumpStatus = (bundleId: string) => api<DumpStatus>(toolPath(bundleId, 'dump/status'));
+export const startDump = (bundleId: string, mode: 'bin' | 'ipa') =>
+  api<{ started?: boolean; error?: string }>(`${toolPath(bundleId, 'dump')}?mode=${mode}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
+export const dumpDownloadUrl = (bundleId: string, kind: 'bin' | 'ipa') =>
+  `${toolPath(bundleId, 'dump/download')}?kind=${kind}`;
+export const dumpImageUrl = (bundleId: string, name: string) =>
+  `${toolPath(bundleId, 'dump/image')}?name=${encodeURIComponent(name)}`;
 // 会话设置走 /api/session-settings 中转；设备错误码在此翻成可读文案（沿用旧适配层）。
 const SETTINGS_ERRORS: Record<string, string> = {
   settings_pairing_required: '设备设置暂不可用。',

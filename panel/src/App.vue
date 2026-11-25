@@ -8,7 +8,9 @@ import DeviceMenu from './components/DeviceMenu.vue';
 import AppDialog from './components/AppDialog.vue';
 import EventBoard from './components/EventBoard.vue';
 import InjectPanel from './components/InjectPanel.vue';
-import ToolStub from './components/ToolStub.vue';
+import FilesPanel from './components/FilesPanel.vue';
+import SymbolsPanel from './components/SymbolsPanel.vue';
+import DumpPanel from './components/DumpPanel.vue';
 import SettingsPanel from './components/SettingsPanel.vue';
 import DiagDialog from './components/DiagDialog.vue';
 import McpDialog from './components/McpDialog.vue';
@@ -156,9 +158,9 @@ onUnmounted(() => clearInterval(poll));
       <main class="panel-body">
         <EventBoard v-if="['crypto', 'sys', 'net', 'keychain', 'other'].includes(store.tab)" :key="store.tab" />
         <InjectPanel v-else-if="store.tab === 'inject'" />
-        <ToolStub v-else-if="store.tab === 'files'" kind="files" />
-        <ToolStub v-else-if="store.tab === 'symbols'" kind="symbols" />
-        <ToolStub v-else-if="store.tab === 'dump'" kind="dump" />
+        <FilesPanel v-else-if="store.tab === 'files'" />
+        <SymbolsPanel v-else-if="store.tab === 'symbols'" />
+        <DumpPanel v-else-if="store.tab === 'dump'" />
         <SettingsPanel v-else-if="store.tab === 'settings'" />
       </main>
     </div>

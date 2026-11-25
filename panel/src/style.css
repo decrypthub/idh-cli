@@ -1097,3 +1097,23 @@ select option{color:var(--ink);background:var(--surface)}
  .toolbar-left .anchor>.dropdown{left:50%;right:auto;translate:-50% 0;max-width:calc(100vw - 24px)}
  .toolbar-right .anchor .dropdown{max-width:calc(100vw - 24px)}
 }
+
+/* 进程工具页 */
+.files-tool .files-workspace { min-height:520px; }
+.files-row .top { min-width:0; flex:1; padding:0; background:transparent; border:0; color:inherit; text-align:left; cursor:pointer; }
+.symbol-image { display:flex; width:100%; min-height:38px; align-items:center; justify-content:space-between; gap:10px; padding:7px 12px; color:var(--ink-2); background:transparent; border:0; border-bottom:1px solid var(--line-soft); text-align:left; cursor:pointer; }
+.symbol-image:hover, .symbol-image.active { color:var(--ink); background:rgba(255,255,255,.04); }
+.symbol-image-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.symbol-search { display:flex; gap:8px; }
+.symbol-search input { flex:1; min-width:0; }
+.symbol-list { max-height:460px; overflow:auto; border-top:1px solid var(--line-soft); }
+.symbol-row { display:block; width:100%; padding:7px 0; color:var(--ink-2); background:transparent; border:0; border-bottom:1px solid var(--line-soft); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px; text-align:left; overflow-wrap:anywhere; cursor:pointer; }
+.symbol-row:hover { color:var(--ink); }
+.dump-actions, .dump-downloads { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.dump-downloads { margin-top:10px; }
+a.hbtn { display:inline-flex; align-items:center; text-decoration:none; }
+@media (max-width:760px) {
+  .files-tool .files-workspace, .tool-grid { display:block; }
+  .files-list-pane { max-height:42vh; }
+  .dump-actions .hbtn { flex:1 1 100%; }
+}
