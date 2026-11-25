@@ -830,7 +830,7 @@ def _panel_request(
     headers = {"Accept": "application/json"}
     if body is not None:
         headers["Content-Type"] = "application/json"
-    with contextlib.closing(HTTPConnection(endpoint.primary_address, endpoint.port, timeout=3)) as connection:
+    with contextlib.closing(HTTPConnection(endpoint.primary_address, endpoint.port, timeout=10)) as connection:
         connection.request("GET" if body is None else "POST", path, body=body, headers=headers)
         response = connection.getresponse()
         payload = response.read() if response.status == 200 or path == _PANEL_SETTINGS_ROUTE else b""
@@ -1131,7 +1131,7 @@ def _run_panel(args: argparse.Namespace) -> int:
                         code, blob, kind = _panel_blob(
                             current["endpoint"], self.path, accept="application/octet-stream"
                         )
-                        if code != 200 or not blob:
+                        if code != 200:
                             self.send_error(404 if code == 404 else 502)
                             return
                         self.write_body(200, blob, kind)
