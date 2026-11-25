@@ -47,8 +47,10 @@ idh disconnect 192.168.100.65:8088
 idh disconnect --all
 ```
 
-`connect` verifies `/api/stats` first. Use `--force` to save a device that is temporarily
-offline. Override the config path with `IDH_CONFIG_PATH`, or pass `--no-saved` to ignore
+`connect` requests `GET /health` first. An `idhjd` reply is saved as `device`, including
+when `apps` is empty. Otherwise it verifies `/api/stats` and saves a live process as `app`.
+Use `--force` to keep an address that is temporarily offline. A failed probe does not clear a
+saved kind. Override the config path with `IDH_CONFIG_PATH`, or pass `--no-saved` to ignore
 saved connections for one command.
 
 ```bash
@@ -207,20 +209,36 @@ Logs go to stderr. stdout is reserved for line-delimited JSON-RPC stdio messages
 ## On-device jailbreak sessions
 
 Enable sessions in IOSDecryptHub Manager and copy its read-only credential.
-Forward the device service to 127.0.0.1, set the credential in the
-IDH_DEVICE_SESSION_TOKEN environment variable, and start the stdio gateway:
+Forward the device service to 127.0.0.1 and set IDH_DEVICE_SESSION_TOKEN.
+`mcp`, `call`, and `tools` share that device connection. The credential is sent
+only to 127.0.0.1.
+
+Use `idh panel` to open the original workbench on the computer.
+To edit session limits under Settings, copy the separate device settings
+credential in Manager and pass it to the panel process as
+`IDH_DEVICE_SETTINGS_TOKEN`. The read-only credential cannot save settings.
+Changes persist on the device and apply to the next session.
 
 ~~~sh
-idh mcp --device-session --endpoint http://127.0.0.1:8088
+idh mcp --endpoint http://127.0.0.1:8088
+idh call list_sessions --endpoint http://127.0.0.1:8088
 ~~~
 
-The gateway can read retained session summaries after the app exits. Pair again
+`idh mcp --device-session` remains an alias for an older package that has no
+`/health`. With several connections, select one by address or connection id.
+An app still uses its bundle.
+
+The three read-only tools can read retained summaries after the app exits.
+Turning session mode off revokes that credential, and later reads fail. Pair again
 and refresh the credential after a service restart.
+`get_process_identity` uses `IDH_PROCESS_TOKEN` instead of the session credential,
+and that token is also sent only to `127.0.0.1`. Pass `processGeneration` when one
+app has more than one live process.
 
 ## Connection status
 
-- `devices` / `connect` probe every saved connection via `/api/stats`. Offline devices
-  show as `offline`.
+- `devices` / `connect` probe `GET /health` first, then `/api/stats` when the peer is not
+  the daemon. Offline addresses show as `offline`. A saved `device` or `app` kind is kept.
 - Before routing (`resolve_live_target`), the target is rechecked over HTTP. Offline
   connections are filtered out.
 

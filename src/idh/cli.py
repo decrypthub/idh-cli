@@ -4,13 +4,17 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from http.client import HTTPConnection, HTTPException
+from importlib.resources import files
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import __version__
 from .config import (
@@ -43,11 +47,21 @@ from .status import status
 PROBE_TIMEOUT = 3.0
 
 
+class UsageError(Exception):
+    """The command line is missing a selector or a credential."""
+
+
 def _manual_endpoints(values: Sequence[str], *, include_saved: bool = True) -> list[AppEndpoint]:
-    endpoints = load_saved_endpoints() if include_saved else []
+    endpoints = list(load_saved_endpoints()) if include_saved else []
+    seen = {endpoint.mcp_url.casefold() for endpoint in endpoints}
     for value in values:
-        endpoints.append(AppEndpoint.from_url(value))
-    return list({endpoint.mcp_url: endpoint for endpoint in endpoints}.values())
+        manual = AppEndpoint.from_url(value)
+        key = manual.mcp_url.casefold()
+        if key in seen:
+            continue
+        endpoints.append(manual)
+        seen.add(key)
+    return endpoints
 
 
 def _probed_endpoints(endpoints: Sequence[AppEndpoint]) -> list[AppEndpoint]:
@@ -57,29 +71,101 @@ def _probed_endpoints(endpoints: Sequence[AppEndpoint]) -> list[AppEndpoint]:
         return list(pool.map(probe_endpoint, endpoints))
 
 
+_DEVICE_READ_TOOLS = {"list_sessions", "get_session", "read_session_events"}
+_DEVICE_PROCESS_TOOLS = {"get_process_identity"}
+
+
+def _endpoint_label(endpoint: AppEndpoint) -> str:
+    kind = endpoint.kind or "unrecognized"
+    name = "idhjd" if endpoint.kind == "device" else endpoint.app_name
+    return f"{endpoint.key}: {endpoint.primary_address}:{endpoint.port} ({kind}, {name})"
+
+
+def _address_matches(endpoint: AppEndpoint, value: str) -> bool:
+    folded = value.strip().casefold()
+    return folded in {
+        f"{endpoint.primary_address}:{endpoint.port}".casefold(),
+        endpoint.base_url.casefold(),
+        endpoint.mcp_url.casefold(),
+        endpoint.key.casefold(),
+    }
+
+
 def _resolve_device(
     endpoints: Sequence[AppEndpoint], target: str | None, *, command: str
 ) -> AppEndpoint:
-    """解析目标设备：显式 target 优先，否则用唯一在线设备。"""
+    """解析一条连接。地址、连接 ID 或 App 的 bundle 都可以。未指定时只用唯一在线连接。"""
     probed = _probed_endpoints(endpoints)
     if target and target.strip():
+        matches = [endpoint for endpoint in probed if _address_matches(endpoint, target)]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise SystemExit(
+                f"idh: {target} matches multiple connections; pass one address or connection id\n"
+                + "\n".join(f"  {_endpoint_label(endpoint)}" for endpoint in matches)
+            )
         try:
             return resolve_target(probed, target)
         except LookupError as exc:
             raise SystemExit(f"idh: {exc}") from exc
-    online = [e for e in probed if e.properties.get("status") == "online"]
+    online = [endpoint for endpoint in probed if endpoint.properties.get("status") == "online"]
     if len(online) == 1:
         return online[0]
     if len(online) > 1:
         raise SystemExit(
-            f"idh: {len(online)} devices online; specify --target <target_id> from `idh devices`\n"
-            + "\n".join(f"  {e.key}: {e.base_url} ({e.app_name})" for e in online)
+            f"idh: {len(online)} connections online; specify an address or connection id\n"
+            + "\n".join(f"  {_endpoint_label(endpoint)}" for endpoint in online)
         )
-    offline = ", ".join(e.base_url for e in probed) or "none saved"
+    offline = ", ".join(endpoint.base_url for endpoint in probed) or "none saved"
     raise SystemExit(
-        f"idh: no online device ({offline})\n"
-        f"  make sure the target app is running, then: idh connect <device IP>:8088"
+        f"idh: no online connection for {command} ({offline})\n"
+        f"  idh connect <device IP>:8088"
     )
+
+
+def _device_client(endpoint: AppEndpoint, tool_name: str | None = None) -> MCPHTTPClient:
+    if endpoint.primary_address != "127.0.0.1" or endpoint.mcp_url != endpoint.base_url + "/api/mcp":
+        raise UsageError("idh: a device credential is only sent to a 127.0.0.1 forward")
+    variable = (
+        "IDH_DEVICE_SESSION_TOKEN"
+        if tool_name is None or tool_name in _DEVICE_READ_TOOLS
+        else "IDH_PROCESS_TOKEN"
+    )
+    token = os.environ.get(variable, "").strip()
+    if not token or not token.isascii() or any(character.isspace() for character in token):
+        raise UsageError(f"idh: set {variable} before calling the device")
+    return MCPHTTPClient(endpoint, bearer_token=token)
+
+
+def _serve_device_session(endpoint: AppEndpoint) -> int:
+    try:
+        client = _device_client(endpoint)
+    except UsageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    def handle(message):
+        method = message.get("method") if isinstance(message, dict) else None
+        identity = message.get("id") if isinstance(message, dict) else None
+        params = message.get("params") if isinstance(message, dict) else None
+        name = params.get("name") if isinstance(params, dict) else None
+        try:
+            chosen = client
+            if method == "tools/call" and isinstance(name, str) and name not in _DEVICE_READ_TOOLS:
+                chosen = _device_client(endpoint, name)
+            reply = chosen.send(message)
+            if method == "initialize" and isinstance(reply, dict) and "error" not in reply:
+                if reply.get("result", {}).get("serverInfo", {}).get("name") != "idhjd":
+                    raise MCPTransportError("expected the paired device session service")
+            return reply
+        except (MCPTransportError, UsageError) as error:
+            if identity is None:
+                return None
+            return {"jsonrpc": "2.0", "id": identity, "error": {"code": -32000, "message": str(error)}}
+
+    serve_stdio(handle)
+    return 0
 
 
 def _add_endpoint_options(parser: argparse.ArgumentParser) -> None:
@@ -138,8 +224,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_endpoint_options(mcp)
 
     call = subparsers.add_parser("call", help="call an MCP tool on a device (defaults to the only online device)")
-    call.add_argument("target", nargs="?", help="target_id from `idh devices`; omit with a single online device")
-    call.add_argument("tool_name", help="remote MCP tool name")
+    call.add_argument("target", nargs="?", help="address, connection id, or app bundle; omit with one online connection")
+    call.add_argument("tool_name", nargs="?", help="remote MCP tool name")
     call.add_argument("--arguments", default="{}", metavar="JSON", help="tool arguments as a JSON object")
     call.add_argument("--allow-mutation", action="store_true", help="allow tools that mutate remote state")
     call.add_argument("--json", action="store_true", help="output the full MCP tool result JSON")
@@ -169,6 +255,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export.add_argument("--include-dumps", action="store_true", help="include hexdumps in addition to hex")
     _add_endpoint_options(export)
+
+    panel = subparsers.add_parser("panel", help="serve the device page on this computer")
+    panel.add_argument("--bind", default="127.0.0.1:8766", help="local address for the page")
+    _add_endpoint_options(panel)
 
     update = subparsers.add_parser("update", help="check for and upgrade idh to the latest version")
     update.add_argument("--check-only", action="store_true", help="only check the latest PyPI version, do not upgrade")
@@ -235,7 +325,12 @@ def _run_connect(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    added = save_endpoint(endpoint)
+    if probed.kind not in {"app", "device"}:
+        for saved in load_saved_endpoints():
+            if saved.mcp_url.casefold() == endpoint.mcp_url.casefold() and saved.kind:
+                probed = probed.with_kind(saved.kind)
+                break
+    added = save_endpoint(probed)
     result = {
         "saved": True,
         "added": added,
@@ -248,7 +343,10 @@ def _run_connect(args: argparse.Namespace) -> int:
         state = "connected and saved" if online else "device unreachable, saved anyway"
         duplicate = " (already exists)" if not added else ""
         print(f"{state}{duplicate}: {endpoint.base_url}")
-        if online:
+        if online and probed.kind == "device":
+            print(f"  Device: idhjd  apps {probed.properties.get('app_count', '0')}")
+            print(f"  MCP: {probed.mcp_url}")
+        elif online:
             print(f"  App: {probed.app_name}  {probed.bundle_id or '-'}")
             print(f"  MCP: {probed.mcp_url}")
     return 0
@@ -294,15 +392,37 @@ def _run_tools(args: argparse.Namespace) -> int:
     endpoints = _manual_endpoints(args.endpoint, include_saved=not args.no_saved)
     try:
         endpoint = _resolve_device(endpoints, args.target, command="tools")
-        client = MCPHTTPClient(endpoint, timeout=10.0)
+        client = _device_client(endpoint) if endpoint.kind == "device" else MCPHTTPClient(endpoint, timeout=10.0)
         client.ensure_initialized()
         response = client.send({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
         result = response.get("result") if isinstance(response, dict) and "error" not in response else None
         if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
             print("idh: invalid tools/list response", file=sys.stderr)
             return 1
+        if endpoint.kind == "device":
+            result = {
+                **result,
+                "tools": [tool for tool in result["tools"] if tool.get("name") in _DEVICE_READ_TOOLS]
+                + [
+                    {
+                        "name": "get_process_identity",
+                        "description": "Read one live process. Requires IDH_PROCESS_TOKEN.",
+                        "inputSchema": {
+                            "type": "object",
+                            "required": ["bundleId"],
+                            "properties": {
+                                "bundleId": {"type": "string"},
+                                "processGeneration": {"type": "string"},
+                            },
+                        },
+                    }
+                ],
+            }
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
+    except UsageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except (SystemExit, MCPTransportError) as exc:
         print(f"idh: {exc}", file=sys.stderr)
         return 1
@@ -318,17 +438,30 @@ def _run_mcp(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    if args.target:
-        handler = TransparentProxy(lambda: endpoints, args.target).handle
-    else:
-        online = [e for e in _probed_endpoints(endpoints) if e.properties.get("status") == "online"]
-        if len(online) == 1:
-            target = online[0].key
-            print(f"idh: proxying to {online[0].base_url} ({online[0].app_name})", file=sys.stderr)
-            handler = TransparentProxy(lambda: endpoints, target).handle
+    try:
+        if args.target:
+            endpoint = _resolve_device(endpoints, args.target, command="mcp")
         else:
-            handler = GatewayServer(lambda: endpoints).handle
-    serve_stdio(handler)
+            online = [item for item in _probed_endpoints(endpoints) if item.properties.get("status") == "online"]
+            if len(online) == 1:
+                endpoint = online[0]
+            elif any(item.kind == "device" for item in online):
+                print(
+                    "idh: more than one connection is online; pass an address or connection id",
+                    file=sys.stderr,
+                )
+                return 2
+            else:
+                handler = GatewayServer(lambda: endpoints).handle
+                serve_stdio(handler)
+                return 0
+    except (SystemExit, UsageError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2 if isinstance(exc, UsageError) else 1
+    if endpoint.kind == "device":
+        return _serve_device_session(endpoint)
+    print(f"idh: proxying to {endpoint.base_url} ({endpoint.app_name})", file=sys.stderr)
+    serve_stdio(TransparentProxy(lambda: endpoints, endpoint.key).handle)
     return 0
 
 
@@ -341,36 +474,7 @@ def _run_device_session_mcp(args: argparse.Namespace) -> int:
     except ValueError:
         print("idh: invalid device-session endpoint", file=sys.stderr)
         return 2
-    if endpoint.primary_address != "127.0.0.1" or endpoint.mcp_url != endpoint.base_url + "/api/mcp":
-        print("idh: use a 127.0.0.1 forward to the device session service", file=sys.stderr)
-        return 2
-    token = os.environ.get("IDH_DEVICE_SESSION_TOKEN", "").strip()
-    if not token or not token.isascii() or any(character.isspace() for character in token):
-        print("idh: set IDH_DEVICE_SESSION_TOKEN to the Manager's read-only pairing credential", file=sys.stderr)
-        return 2
-    client = MCPHTTPClient(endpoint, bearer_token=token)
-    read_tools = {"list_sessions", "get_session", "read_session_events"}
-
-    def handle(message):
-        method = message.get("method") if isinstance(message, dict) else None
-        identity = message.get("id") if isinstance(message, dict) else None
-        params = message.get("params") if isinstance(message, dict) else None
-        name = params.get("name") if isinstance(params, dict) else None
-        try:
-            if method == "tools/call" and (not isinstance(name, str) or name not in read_tools):
-                raise MCPTransportError("device sessions expose three read-only tools")
-            reply = client.send(message)
-            if method == "initialize" and isinstance(reply, dict) and "error" not in reply:
-                if reply.get("result", {}).get("serverInfo", {}).get("name") != "idhjd":
-                    raise MCPTransportError("expected the paired device session service")
-            return reply
-        except MCPTransportError as error:
-            if identity is None:
-                return None
-            return {"jsonrpc": "2.0", "id": identity, "error": {"code": -32000, "message": str(error)}}
-
-    serve_stdio(handle)
-    return 0
+    return _serve_device_session(endpoint)
 
 
 def _run_call(args: argparse.Namespace) -> int:
@@ -381,6 +485,12 @@ def _run_call(args: argparse.Namespace) -> int:
         return 2
     if not isinstance(tool_arguments, dict):
         print("idh: --arguments must be a JSON object", file=sys.stderr)
+        return 2
+    if args.tool_name is None and args.target:
+        args.tool_name = args.target
+        args.target = None
+    if not args.tool_name:
+        print("idh: call needs a tool name", file=sys.stderr)
         return 2
 
     endpoints = _manual_endpoints(args.endpoint, include_saved=not args.no_saved)
@@ -396,7 +506,11 @@ def _run_call(args: argparse.Namespace) -> int:
         )
         return 2
     try:
-        client = MCPHTTPClient(endpoint)
+        client = (
+            _device_client(endpoint, args.tool_name)
+            if endpoint.kind == "device"
+            else MCPHTTPClient(endpoint)
+        )
         client.ensure_initialized()
         response = client.send(
             {
@@ -406,6 +520,9 @@ def _run_call(args: argparse.Namespace) -> int:
                 "params": {"name": args.tool_name, "arguments": tool_arguments},
             }
         )
+    except UsageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except MCPTransportError as exc:
         print(f"idh: {exc}", file=sys.stderr)
         return 1
@@ -482,6 +599,9 @@ def _run_export(args: argparse.Namespace) -> int:
     except SystemExit as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    if endpoint.kind == "device":
+        print("idh: a device connection reads saved sessions; it does not export app events", file=sys.stderr)
+        return 2
 
     if args.output:
         output = Path(args.output).expanduser().resolve()
@@ -676,6 +796,199 @@ def _run_auto_update(args: argparse.Namespace) -> None:
         maybe_auto_update(force=force, allow_upgrade=True)
 
 
+_PANEL_SESSION_ROUTE = re.compile(r"/api/sessions(?:/[A-Za-z0-9_-]{1,64}(?:/events)?)?")
+_PANEL_SETTINGS_ROUTE = "/api/session-settings"
+_PANEL_SETTINGS_MAX_BYTES = 4096
+
+
+def _panel_request(
+    endpoint: AppEndpoint, path: str, token: str = "", *, body: bytes | None = None
+) -> tuple[int, object]:
+    if endpoint.primary_address != "127.0.0.1":
+        raise UsageError("idh: the computer page only talks to a 127.0.0.1 forward")
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    with contextlib.closing(HTTPConnection("127.0.0.1", endpoint.port, timeout=3)) as connection:
+        connection.request("GET" if body is None else "POST", path, body=body, headers=headers)
+        response = connection.getresponse()
+        payload = response.read() if response.status == 200 or path == _PANEL_SETTINGS_ROUTE else b""
+        return response.status, json.loads(payload) if payload else None
+
+
+def _run_panel(args: argparse.Namespace) -> int:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    endpoints = _manual_endpoints(args.endpoint, include_saved=not args.no_saved)
+    try:
+        endpoint = _resolve_device(endpoints, None, command="panel")
+    except SystemExit as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if endpoint.kind != "device":
+        print("idh: panel serves a device connection", file=sys.stderr)
+        return 2
+    host, _, port_text = args.bind.rpartition(":")
+    host = host or "127.0.0.1"
+    try:
+        port = int(port_text)
+        if host not in {"127.0.0.1", "localhost"} or not 0 <= port <= 65535:
+            raise ValueError
+    except ValueError:
+        print("idh: --bind must use 127.0.0.1 or localhost and a valid port", file=sys.stderr)
+        return 2
+    try:
+        code, health = _panel_request(endpoint, "/health")
+        if code != 200 or not isinstance(health, dict) or health.get("service") != "idhjd":
+            raise UsageError("idh: panel serves a device connection")
+        panel_files = files("idh")
+        metadata = f'<meta name="idh-device-endpoint" content="{endpoint.base_url}">'.encode()
+        page = panel_files.joinpath("panel.html").read_bytes().replace(
+            b"<!-- IDH_DEVICE_ENDPOINT -->", metadata
+        )
+        assets = {
+            "/panel-device.js": (panel_files.joinpath("panel-device.js").read_bytes(), "text/javascript; charset=utf-8"),
+            "/wechat-follow.png": (panel_files.joinpath("wechat-follow.png").read_bytes(), "image/png"),
+        }
+    except (HTTPException, OSError, ValueError, UsageError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    class Handler(BaseHTTPRequestHandler):
+        timeout = 5
+
+        def valid_host(self) -> bool:
+            allowed_hosts = {
+                f"127.0.0.1:{self.server.server_port}",
+                f"localhost:{self.server.server_port}",
+            }
+            if self.server.server_port == 80:
+                allowed_hosts.update(("127.0.0.1", "localhost"))
+            hosts = self.headers.get_all("Host") or []
+            return len(hosts) == 1 and hosts[0] in allowed_hosts
+
+        def write_body(self, code: int, body: bytes, kind: str) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", kind)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def write_json(self, code: int, data: object) -> None:
+            self.write_body(code, json.dumps(data).encode(), "application/json")
+
+        def relay_settings(self, body: bytes | None = None) -> None:
+            token = os.environ.get("IDH_DEVICE_SETTINGS_TOKEN", "").strip()
+            if not token and body is None:
+                token = os.environ.get("IDH_DEVICE_SESSION_TOKEN", "").strip()
+            if not token:
+                self.write_json(401, {"error": "settings_pairing_required"})
+                return
+            try:
+                code, data = _panel_request(endpoint, _PANEL_SETTINGS_ROUTE, token, body=body)
+            except (HTTPException, OSError, ValueError, UsageError):
+                self.write_json(502, {"error": "device_unavailable"})
+                return
+            if code not in {200, 400, 401, 403, 404, 409, 500}:
+                self.write_json(502, {"error": "device_unavailable"})
+                return
+            self.write_json(code, data if isinstance(data, dict) else {"error": "settings_unavailable"})
+
+        def do_POST(self) -> None:
+            if not self.valid_host():
+                self.send_error(400)
+                return
+            if self.path != _PANEL_SETTINGS_ROUTE:
+                self.send_error(404)
+                return
+            if self.headers.get_all("Origin") != [f"http://{self.headers['Host']}"]:
+                self.write_json(403, {"error": "origin_required"})
+                return
+            lengths = self.headers.get_all("Content-Length") or []
+            if (len(lengths) != 1 or re.fullmatch(r"[0-9]{1,4}", lengths[0]) is None or
+                    self.headers.get("Transfer-Encoding") or
+                    self.headers.get_content_type() != "application/json"):
+                self.write_json(400, {"error": "invalid_settings"})
+                return
+            length = int(lengths[0])
+            if not 0 < length <= _PANEL_SETTINGS_MAX_BYTES:
+                self.write_json(400, {"error": "invalid_settings"})
+                return
+            try:
+                body = self.rfile.read(length)
+            except OSError:
+                self.write_json(408, {"error": "incomplete_settings"})
+                return
+            if len(body) != length:
+                self.write_json(400, {"error": "incomplete_settings"})
+                return
+            self.relay_settings(body)
+
+        def do_GET(self) -> None:
+            if not self.valid_host():
+                self.send_error(400)
+                return
+            if self.path == _PANEL_SETTINGS_ROUTE:
+                self.relay_settings()
+                return
+            try:
+                target = urlsplit(self.path)
+            except ValueError:
+                self.send_error(400)
+                return
+            if target.scheme or target.netloc or target.fragment:
+                self.send_error(400)
+                return
+            session_route = _PANEL_SESSION_ROUTE.fullmatch(target.path) and (
+                not target.query or target.path.endswith("/events")
+            )
+            if not target.query and target.path in {"/", "/index.html"}:
+                body = page
+                kind = "text/html; charset=utf-8"
+            elif not target.query and target.path in assets:
+                body, kind = assets[target.path]
+            elif session_route or self.path == "/health":
+                token = ""
+                if session_route:
+                    token = os.environ.get("IDH_DEVICE_SESSION_TOKEN", "").strip()
+                    if not token:
+                        self.send_error(401)
+                        return
+                try:
+                    code, data = _panel_request(endpoint, self.path, token)
+                except (HTTPException, OSError, ValueError, UsageError):
+                    self.send_error(502)
+                    return
+                if code != 200:
+                    self.send_error(code if code in {400, 401, 404} else 502)
+                    return
+                body = json.dumps(data).encode()
+                kind = "application/json"
+            else:
+                self.send_error(404)
+                return
+            self.write_body(200, body, kind)
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+    try:
+        server = ThreadingHTTPServer((host, port), Handler)
+    except OSError as exc:
+        print(f"idh: {exc}", file=sys.stderr)
+        return 1
+    print(f"http://{host}:{server.server_port}/", file=sys.stderr, flush=True)
+    try:
+        with server:
+            server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(_normalize_argv(sys.argv[1:] if argv is None else argv))
@@ -694,6 +1007,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_tools(args)
         if args.command == "mcp":
             return _run_mcp(args)
+        if args.command == "panel":
+            return _run_panel(args)
         if args.command == "call":
             return _run_call(args)
         if args.command == "export":

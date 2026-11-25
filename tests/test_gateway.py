@@ -370,6 +370,25 @@ def test_cli_connect_persists_endpoint_for_other_commands(
     assert json.loads(config.read_text())["endpoints"] == []
 
 
+def test_call_selects_an_app_by_bundle(
+    remote_endpoint: AppEndpoint, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = main(
+        [
+            "call",
+            "com.example.demo",
+            "get_stats",
+            "--endpoint",
+            remote_endpoint.base_url,
+            "--no-saved",
+            "--json",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["content"][0]["text"] == "remote result"
+
+
 def test_call_without_target_uses_single_online_device(
     remote_endpoint: AppEndpoint, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -1,0 +1,1254 @@
+<!doctype html>
+<html lang='zh-CN'>
+<head>
+<!-- IDH_DEVICE_ENDPOINT -->
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<meta name='theme-color' content='#06070a'>
+<title>IOSDecryptHub</title>
+<style>
+  /* Preserve the desktop workbench palette; only its layout changes. */
+  :root {
+    --bg:#06070a; --chrome:#06070a; --surface:#0f1218; --surface-2:#151922;
+    --surface-3:#1b202a; --line:#2c3340; --line-soft:#1a1f28;
+    --ink:#ffffff; --ink-2:#e5e8ee; --muted:#aeb5c0;
+    --blue:#78a9ff; --coral:#ff8b7b; --amber:#ffc85c; --lilac:#c7a6ff;
+    --cyan:#79d6e8; --pink:#ff9fbc; --green:#8bd6a8; --danger:#ff788c;
+    --active:color-mix(in srgb,var(--blue) 11%,transparent);
+    --left-width:410px;
+  }
+  * { box-sizing:border-box }
+  [hidden] { display:none !important }
+  html,body { margin:0; height:100%; color-scheme:dark; background:var(--bg); color:var(--ink-2); font:13px/1.45 Inter,system-ui,-apple-system,'Segoe UI',sans-serif }
+  button,input,select,textarea { font:inherit; color:inherit }
+  button { background:none; border:0; cursor:pointer }
+  button:disabled { cursor:default; opacity:.55 }
+  :focus-visible { outline:2px solid var(--blue); outline-offset:-2px }
+  .mono,kbd,pre,.event-index,.event-time,.small-stat,.metric-value { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-variant-numeric:tabular-nums }
+  .icon-defs { position:absolute; width:0; height:0; overflow:hidden }
+  .ico { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.65; stroke-linecap:round; stroke-linejoin:round; flex:none }
+  .ico.sm { width:13px; height:13px }
+  .app { height:100dvh; min-height:380px; display:flex; flex-direction:column; overflow:hidden }
+  .topbar { min-height:62px; flex-shrink:0; display:flex; align-items:center; justify-content:space-between; padding:0 19px 0 17px; border-bottom:1px solid var(--line-soft); background:var(--chrome); gap:14px }
+  .brand-row,.top-actions,.toolbar-group,.hstack { display:flex; align-items:center; gap:10px; min-width:0 }
+  .brand-row { flex-wrap:wrap; gap:8px }
+  .brand-mark { width:33px; height:33px; border-radius:5px; background:var(--ink); color:var(--bg); display:grid; place-items:center; flex:none }
+  .hdr-raven { width:22px; height:22px; display:block }
+  .brand { font-weight:730; color:var(--ink); font-size:16px; white-space:nowrap }
+  .brand-meta { display:flex; gap:8px; align-items:center; font-size:11px; color:var(--muted); white-space:nowrap; margin-left:4px }
+  .status-dot { width:7px; height:7px; display:inline-block; background:var(--muted); border-radius:50%; flex:none }
+  .status-dot.ok { background:var(--green) }
+  .status-dot.warn { background:var(--amber) }
+  .status-dot.off { background:var(--danger) }
+  .status-divider,.toolbar-divider { width:1px; height:17px; background:var(--line) }
+  .top-actions { gap:7px; justify-content:flex-end }
+  .anchor { position:relative; min-width:0 }
+  .session-btn { min-width:210px; max-width:310px; justify-content:space-between !important; text-align:left }
+  .session-info { min-width:0; display:grid; gap:1px; width:100% }
+  .session-info strong,.session-info small { text-overflow:ellipsis; overflow:hidden; white-space:nowrap }
+  .session-info small { color:var(--muted); font-size:10px }
+  .session-dropdown { width:min(420px,calc(100vw - 28px)); max-height:min(62vh,480px); overflow:auto }
+  .btn { min-height:33px; display:inline-flex; justify-content:center; align-items:center; gap:7px; padding:1px 11px; white-space:nowrap; border:1px solid var(--line); background:var(--surface); border-radius:6px; transition:background .15s,border-color .15s }
+  .btn:hover:not(:disabled) { background:var(--surface-3); border-color:var(--muted) }
+  .btn.sm { min-height:29px; font-size:12px; padding:0 9px }
+  .btn.icon-only { width:33px; padding:0 }
+  .btn.sm.icon-only { width:29px }
+  .btn.ghost { border-color:transparent; background:transparent; color:var(--muted) }
+  .btn.primary { background:var(--ink); border-color:var(--ink); color:var(--bg); font-weight:650 }
+  .btn.primary:hover:not(:disabled) { background:var(--ink-2); color:var(--bg) }
+  .btn[aria-pressed=true],.btn[aria-expanded=true] { color:var(--blue); border-color:var(--blue); background:var(--active) }
+  .module-tabs { min-height:51px; display:flex; flex:none; align-items:stretch; gap:4px; padding:0 16px; overflow:auto; border-bottom:1px solid var(--line); scrollbar-width:none }
+  .module-tab,.detail-tab { position:relative; display:flex; align-items:center; gap:8px; padding:0 15px; white-space:nowrap; color:var(--muted); font-size:12.5px }
+  .module-tab:hover,.detail-tab:hover { color:var(--ink) }
+  .module-tab[aria-selected=true],.detail-tab[aria-selected=true] { color:var(--ink); font-weight:650 }
+  .module-tab[aria-selected=true]::after,.detail-tab[aria-selected=true]::after { content:''; height:2px; position:absolute; inset:auto 10px 0; background:var(--blue); border-radius:4px 4px 0 0 }
+  .tab-count { font:11px ui-monospace,monospace; color:var(--muted) }
+  .module-tab[aria-selected=true] .tab-count { color:var(--blue) }
+  .toolbar { min-height:61px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 17px; gap:12px; background:var(--bg); border-bottom:1px solid var(--line) }
+  .toolbar-group { gap:8px }
+  .toolbar-left { flex:1 }
+  .toolbar-right { flex:none }
+  .search-wrap { position:relative; width:285px; min-width:120px; flex-shrink:1 }
+  .search-wrap .ico { position:absolute; top:10px; left:11px; color:var(--muted); pointer-events:none }
+  .search-input,.filter-select,.field input:not([type=checkbox]),.field select,textarea { border:1px solid var(--line); background:var(--surface); border-radius:6px; color:var(--ink-2) }
+  .search-input { width:100%; height:35px; padding:0 32px 0 34px }
+  .search-input::placeholder { color:var(--muted); opacity:.78 }
+  kbd { color:var(--muted); border:1px solid var(--line); padding:1px 5px; border-radius:4px; font-size:10px }
+  .search-kbd { position:absolute; right:10px; top:8px; pointer-events:none }
+  .toolbar-stat,.small-stat { color:var(--muted); font-size:11px; white-space:nowrap }
+  .toolbar-stat strong { color:var(--ink-2); font-weight:650 }
+  .dropdown { position:absolute; z-index:12; top:calc(100% + 7px); left:0; width:245px; padding:6px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); box-shadow:0 12px 36px rgba(0,0,0,.45) }
+  .dropdown.right { right:0; left:auto }
+  .dropdown.session-dropdown { width:min(420px,calc(100vw - 28px)) }
+  .dropdown-head { padding:7px 10px; color:var(--muted); font-size:11px; font-weight:650 }
+  .dropdown-item { width:100%; min-height:32px; display:flex; align-items:center; justify-content:space-between; gap:9px; padding:7px 9px; text-align:left; border-radius:5px }
+  .dropdown-item:hover:not(:disabled) { background:var(--surface-3) }
+  .dropdown-item[aria-checked=true],.dropdown-item[aria-selected=true] { background:var(--active); color:var(--blue) }
+  .dropdown-item span:first-child { min-width:0; overflow-wrap:anywhere }
+  .dropdown-sub { display:block; color:var(--muted); font-size:11px; margin-top:2px }
+  .dropdown-divider { height:1px; background:var(--line); margin:5px 6px }
+  .proc-details { display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 12px; margin:0; padding:4px 10px 10px; font-size:11.5px }
+  .proc-details dt { color:var(--muted) }
+  .proc-details dd { margin:0; overflow-wrap:anywhere }
+  .tool-boundary { border-inline-start:1px solid var(--line-soft); margin-inline-start:5px }
+  .filter-select { display:block; width:calc(100% - 14px); min-height:29px; margin:0 7px 7px; padding:4px 7px }
+  .notice { padding:8px 17px; color:var(--muted); background:var(--surface-2); border-bottom:1px solid var(--line); font-size:12px }
+  .notice.warn { color:var(--amber) }
+  .workarea { flex:1; min-height:0; overflow:hidden; display:flex }
+  .tool-workspace { flex:1; min-height:0; overflow:auto; background:var(--bg) }
+  .tool-page { max-width:1160px; margin:0 auto; padding:26px clamp(18px,3.4vw,42px) 35px }
+  .tool-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin:0 0 20px }
+  .tool-header h2 { font-size:18px; margin:0 0 5px; color:var(--ink) }
+  .tool-header p,.tool-note { color:var(--muted); margin:0; font-size:12px }
+  .tool-status { color:var(--amber); white-space:nowrap }
+  .tool-grid { display:grid; grid-template-columns:minmax(190px,.8fr) minmax(0,1.5fr); gap:12px }
+  .tool-surface { min-width:0; min-height:150px; background:var(--surface); border:1px solid var(--line); border-radius:8px; overflow:hidden }
+  .tool-surface h3 { margin:0; padding:10px 14px; font-size:12px; border-bottom:1px solid var(--line); background:var(--surface-2) }
+  .tool-content { padding:13px 14px; overflow-wrap:anywhere }
+  .tool-path { display:block; padding:7px 10px; border:1px solid var(--line); background:var(--surface-2); border-radius:5px; margin-bottom:11px }
+  .tool-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px }
+  .tool-table th,.tool-table td { padding:10px 13px; text-align:left; border-bottom:1px solid var(--line-soft) }
+  .tool-table th { color:var(--muted); background:var(--surface-2); font-weight:500 }
+  .events-panel { flex:0 0 var(--left-width); min-width:260px; max-width:65%; min-height:0; display:flex; flex-direction:column; background:var(--bg) }
+  .events-header { height:46px; display:flex; justify-content:space-between; align-items:center; flex:none; padding:0 14px 0 18px; border-bottom:1px solid var(--line-soft); color:var(--muted); font-size:12px }
+  .events-header strong { font-weight:650; color:var(--ink-2) }
+  .event-list { flex:1; min-height:0; overflow:auto; scrollbar-width:thin }
+  .event-row { min-height:73px; width:100%; display:flex; gap:10px; text-align:left; align-items:flex-start; padding:11px 15px 10px 17px; border-left:2px solid transparent; border-bottom:1px solid var(--line-soft) }
+  .event-row:hover { background:var(--surface) }
+  .event-row.selected { background:var(--active); border-left-color:var(--blue) }
+  .event-list.compact .event-row { min-height:52px; padding-top:7px; padding-bottom:7px }
+  .event-list.compact .event-body { gap:3px }
+  .event-index { flex:0 0 36px; color:var(--muted); font-size:11px; padding-top:2px }
+  .event-row.selected .event-index { color:var(--blue) }
+  .event-body { flex:1; display:grid; gap:6px; min-width:0 }
+  .event-top,.event-sub { display:flex; gap:7px; align-items:center; min-width:0 }
+  .event-name { font-size:12.5px; color:var(--ink-2); font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .event-time { margin-left:auto; white-space:nowrap; color:var(--muted); font-size:10.5px }
+  .event-sub { color:var(--muted); font-size:11px; overflow:hidden; white-space:nowrap }
+  .event-source { overflow:hidden; text-overflow:ellipsis }
+  .pill { padding:1px 6px; flex:none; color:var(--muted); border:1px solid var(--line); border-radius:4px; font-size:10.5px; line-height:16px; white-space:nowrap }
+  .pill.phase { color:var(--blue); background:var(--active); border-color:transparent }
+  .pill.aborted { color:var(--amber); background:var(--surface-2); border-color:transparent }
+  .event-footer { height:35px; display:flex; justify-content:space-between; align-items:center; flex:none; padding:0 17px; background:var(--surface); border-top:1px solid var(--line-soft); color:var(--muted); font-size:11px }
+  .event-footer .status-dot { margin-right:5px; vertical-align:0 }
+  .splitter { width:5px; flex:none; background:var(--line-soft); cursor:col-resize; position:relative; touch-action:none }
+  .splitter::after { content:''; position:absolute; inset:0 -4px; z-index:1 }
+  .splitter:hover,.splitter.dragging { background:var(--blue) }
+  .detail-pane { flex:1; min-width:0; display:flex; flex-direction:column; background:var(--surface); overflow:hidden }
+  .detail-header { min-height:85px; display:flex; justify-content:space-between; align-items:center; padding:14px 23px; gap:12px; flex:none; border-bottom:1px solid var(--line-soft) }
+  .detail-header h2 { color:var(--ink); font-size:18px; margin:0; overflow-wrap:anywhere }
+  .detail-title-row,.detail-subtitle { display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+  .detail-subtitle { margin-top:7px; color:var(--muted); font-size:11.5px }
+  .detail-actions { display:flex; gap:6px; flex:none }
+  .detail-tabs { min-height:43px; display:flex; gap:3px; padding:0 19px; border-bottom:1px solid var(--line); flex:none }
+  .detail-scroll { flex:1; min-height:0; overflow:auto; padding:24px clamp(17px,3vw,42px) 45px }
+  .content-max { max-width:1080px; margin:0 auto }
+  .content-title { margin:0 0 12px; font-size:12px; font-weight:700; color:var(--ink-2) }
+  .metric-grid,.box-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:23px }
+  .box-grid { grid-template-columns:1fr 1fr; gap:12px }
+  .metric,.data-card,.kv-table,.code-body { background:var(--surface-2); border:1px solid var(--line); border-radius:8px; min-width:0 }
+  .metric { padding:13px }
+  .metric-label,.data-card-head,.kv-row .key { color:var(--muted); font-size:11px }
+  .metric-value { margin-top:7px; color:var(--ink); font-size:15px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .data-card-head { padding:10px 13px; border-bottom:1px solid var(--line-soft); color:var(--ink-2); font-weight:650 }
+  .kv-row { display:grid; grid-template-columns:minmax(75px,110px) minmax(0,1fr); gap:10px; align-items:baseline; padding:9px 12px; border-top:1px solid var(--line-soft); font-size:12px }
+  .kv-row:first-child { border-top:0 }
+  .kv-row .val { overflow-wrap:anywhere }
+  .code-body { margin:0; padding:14px; font-size:11.5px; color:var(--ink-2); white-space:pre-wrap; overflow-wrap:anywhere }
+  .io-panels { display:grid; gap:12px; margin:0 0 22px }
+  .io-section { border:1px solid var(--line); border-radius:7px; background:var(--bg); overflow:hidden }
+  .io-section.in-card { border-left:2px solid var(--blue) }
+  .io-section.out-card { border-left:2px solid var(--coral) }
+  .io-card-head { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--line-soft); background:var(--surface-2) }
+  .io-card-head h3 { margin:0; font-size:12px; font-weight:680 }
+  .in-card .io-card-head h3 { color:var(--blue) }
+  .out-card .io-card-head h3 { color:var(--coral) }
+  .io-status,.io-section p,.byte-help { color:var(--muted); font-size:11.5px }
+  .io-section p { margin:0; padding:10px 12px }
+  .byte-preview { border:1px solid var(--line); border-radius:7px; background:var(--bg); overflow:hidden }
+  .byte-header { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line-soft); background:var(--surface-2) }
+  .byte-header h3 { font-size:12px; margin:0; color:var(--ink-2) }
+  .byte-help { margin:4px 0 0 }
+  .byte-options { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:9px 12px }
+  .byte-note { margin:0; padding:6px 12px 12px; color:var(--muted); font-size:12px; overflow-wrap:anywhere }
+  .byte-note.error { color:var(--danger) }
+  .byte-view { margin:0 12px 12px; max-height:min(45vh,420px); overflow:auto; line-height:1.65; white-space:pre; overflow-wrap:normal }
+  .byte-view[data-format=base64] { white-space:pre-wrap; overflow-wrap:anywhere }
+  .byte-receipt { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:0 12px 8px; color:var(--muted); font-size:11px }
+  .byte-receipt .mono { overflow-wrap:anywhere }
+  .empty-state { min-height:170px; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:22px; text-align:center; color:var(--muted) }
+  .empty-state strong { color:var(--ink-2); font-size:13px }
+  .empty-state p { margin:0; font-size:12px }
+  .empty-icon { width:43px; height:43px; display:grid; place-items:center; border:1px solid var(--line); border-radius:10px; background:var(--surface-2) }
+  .load-more { display:block; width:calc(100% - 24px); margin:9px auto }
+  dialog { color:var(--ink-2); background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:0; box-shadow:0 28px 90px rgba(0,0,0,.65) }
+  dialog::backdrop { background:rgba(0,0,0,.76); backdrop-filter:blur(5px) }
+  .settings-modal { width:min(994px,95vw); height:min(690px,88dvh) }
+  .settings-layout { height:100%; display:flex }
+  .settings-side { width:225px; flex:none; display:flex; flex-direction:column; border-right:1px solid var(--line); background:var(--bg); padding:23px 13px 15px }
+  .settings-side-title { color:var(--ink); font-size:17px; font-weight:700; padding:0 8px }
+  .settings-side-caption,.settings-side-bottom { color:var(--muted); font-size:11px; padding:3px 8px 12px }
+  .settings-side-bottom { margin-top:auto; padding-top:12px }
+  .setting-nav-item { width:100%; min-height:35px; display:flex; align-items:center; gap:9px; padding:0 9px; color:var(--muted); text-align:left; border-radius:5px; white-space:nowrap }
+  .setting-nav-item:hover { background:var(--surface-2); color:var(--ink-2) }
+  .setting-nav-item[aria-current=page] { color:var(--blue); background:var(--active) }
+  .settings-main { flex:1; min-width:0; display:flex; flex-direction:column }
+  .settings-titlebar,.settings-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 30px; flex:none; border-bottom:1px solid var(--line); min-height:75px }
+  .settings-titlebar h2,.dialog-head h2 { font-size:17px; font-weight:700; color:var(--ink); margin:0 }
+  .settings-titlebar p,.helper,.dirty-status { font-size:11.5px; color:var(--muted); margin:3px 0 0 }
+  .settings-content { flex:1; min-height:0; overflow:auto; padding:22px 30px }
+  .settings-foot { min-height:61px; border:0; border-top:1px solid var(--line); padding-top:7px; padding-bottom:7px }
+  .dirty-status.warn { color:var(--amber) }
+  .dirty-status.error { color:var(--danger) }
+  .settings-group { border:1px solid var(--line); border-radius:7px; overflow:hidden; margin:0 0 17px }
+  .settings-group h3 { margin:0; padding:9px 13px; font-size:12px; background:var(--surface-2); color:var(--ink-2) }
+  .field { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 13px; border-top:1px solid var(--line-soft); font-size:12px }
+  .field span small { display:block; margin-top:2px; color:var(--muted); font-size:11px }
+  .field select,.field input:not([type=checkbox]) { min-height:29px; width:128px; flex:none; padding:3px 7px }
+  .switch { appearance:none; width:31px; height:18px; flex:none; margin:0; border:1px solid var(--line); border-radius:10px; background:var(--surface-3); cursor:pointer }
+  .switch::before { content:''; display:block; width:12px; height:12px; margin:2px 0 0 2px; background:var(--ink); border-radius:50%; transition:translate .15s }
+  .switch:checked { background:var(--blue) }
+  .switch:checked::before { translate:13px 0 }
+  .raw-actions { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 10px }
+  textarea { width:100%; min-height:242px; padding:10px; resize:vertical; font:12px/1.5 ui-monospace,Consolas,monospace; white-space:pre }
+  .helper { margin:0 0 12px }
+  .mini-dialog { width:min(560px,92vw); max-height:90dvh }
+  .diagnostic-dialog { width:min(860px,94vw); max-height:88dvh }
+  .diagnostic-dialog .dialog-head { flex-wrap:wrap }
+  .diagnostic-dialog .code-body { max-height:min(57dvh,420px); overflow:auto }
+  .diag-actions { flex-wrap:wrap }
+  .dialog-head { display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--line) }
+  .dialog-body { padding:18px }
+  .dialog-body img { display:block; max-width:100%; margin:auto }
+  .toast { position:fixed; bottom:18px; left:50%; translate:-50% 0; max-width:90vw; padding:7px 12px; background:var(--blue); color:var(--bg); border-radius:5px; pointer-events:none; z-index:30 }
+  @media(max-width:880px) {
+    .topbar { flex-wrap:wrap; padding:8px 12px; gap:7px }
+    .brand-meta .protocol { display:none }
+    .top-actions { margin-left:auto }
+    .session-btn { min-width:150px; max-width:225px }
+    .toolbar { padding:0 11px }
+    .events-panel { flex-basis:min(var(--left-width),45%); min-width:215px }
+    .detail-header { padding:12px 15px; flex-wrap:wrap }
+    .box-grid { grid-template-columns:1fr }
+    .metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)) }
+    .settings-side { width:164px }
+    .settings-content,.settings-titlebar,.settings-foot { padding-inline:18px }
+  }
+  @media(max-width:610px) {
+    .topbar { min-height:50px }
+    .top-actions { width:100% }
+    .session-btn { min-width:122px; max-width:min(57vw,260px) }
+    .top-actions .anchor { margin-right:auto }
+    .dropdown.session-dropdown { left:0; right:auto }
+    .module-tabs { min-height:41px; padding:0 8px }
+    .module-tab { padding:0 10px }
+    .toolbar { padding:6px 9px; min-height:0; flex-wrap:wrap }
+    .toolbar-right { margin-left:auto }
+    .workarea { flex-direction:column }
+    .events-panel { flex:0 0 42%; width:100%; min-width:0; max-width:none; border-bottom:1px solid var(--line) }
+    .splitter { display:none }
+    .detail-pane { min-height:0 }
+    .detail-header { min-height:0 }
+    .detail-scroll { padding:13px }
+    .tool-grid { grid-template-columns:1fr }
+    .settings-modal { height:min(790px,92dvh) }
+    .settings-layout { flex-direction:column }
+    .settings-side { width:100%; padding:6px 8px; border-bottom:1px solid var(--line) }
+    .settings-side-title,.settings-side-caption,.settings-side-bottom,.setting-nav-item .ico { display:none }
+    .settings-side nav { display:flex; overflow:auto }
+    .setting-nav-item { width:auto; min-height:31px }
+    .settings-titlebar { min-height:57px }
+    .settings-content,.settings-titlebar,.settings-foot { padding-inline:12px }
+  }
+  @media(prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none !important } }
+</style>
+</head>
+<body>
+<svg class='icon-defs' aria-hidden='true' xmlns='http://www.w3.org/2000/svg'>
+  <symbol id='i-search' viewBox='0 0 24 24'><circle cx='10.7' cy='10.7' r='6.7'/><path d='m16 16 4.2 4.2'/></symbol>
+  <symbol id='i-chevron' viewBox='0 0 24 24'><path d='m6 9 6 6 6-6'/></symbol>
+  <symbol id='i-filter' viewBox='0 0 24 24'><path d='M4 7h16M7 12h10m-7 5h4'/></symbol>
+  <symbol id='i-more' viewBox='0 0 24 24'><circle cx='5' cy='12' r='1'/><circle cx='12' cy='12' r='1'/><circle cx='19' cy='12' r='1'/></symbol>
+  <symbol id='i-list' viewBox='0 0 24 24'><path d='M8 6h12M8 12h12M8 18h12M4 6h.1M4 12h.1M4 18h.1'/></symbol>
+  <symbol id='i-code' viewBox='0 0 24 24'><path d='m8 6-5 6 5 6m8-12 5 6-5 6m-3-15-2 18'/></symbol>
+  <symbol id='i-download' viewBox='0 0 24 24'><path d='M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4'/></symbol>
+  <symbol id='i-copy' viewBox='0 0 24 24'><rect x='8' y='8' width='12' height='12' rx='2'/><path d='M16 4H6a2 2 0 0 0-2 2v10'/></symbol>
+  <symbol id='i-pause' viewBox='0 0 24 24'><path d='M9 5v14m6-14v14'/></symbol>
+  <symbol id='i-play' viewBox='0 0 24 24'><path d='m8 5 11 7-11 7z'/></symbol>
+  <symbol id='i-check' viewBox='0 0 24 24'><path d='m5 12 4 4L19 6'/></symbol>
+  <symbol id='i-x' viewBox='0 0 24 24'><path d='m6 6 12 12M18 6 6 18'/></symbol>
+  <symbol id='i-gear' viewBox='0 0 24 24'><circle cx='12' cy='12' r='3'/><path d='M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M19 5l-2 2M7 17l-2 2'/></symbol>
+  <symbol id='i-terminal' viewBox='0 0 24 24'><rect x='3' y='4' width='18' height='16' rx='2'/><path d='m7 9 3 3-3 3m6 0h4'/></symbol>
+  <symbol id='i-info' viewBox='0 0 24 24'><circle cx='12' cy='12' r='9'/><path d='M12 11v6m0-10v.5'/></symbol>
+  <symbol id='i-box' viewBox='0 0 24 24'><path d='M4 6h16v13H4zm0 4h16m-10 3h4'/></symbol>
+</svg>
+<div class='app'>
+  <header class='topbar'>
+    <div class='brand-row'>
+      <div class='brand-mark' aria-hidden='true'><svg class="hdr-raven" viewBox="0 0 281 251" width="14" height="12" fill="currentColor" aria-hidden="true"><g fill-rule="evenodd"><path d="M8,36L4,46L19,45L33,48L41,48L50,50L50,52L53,51L55,53L54,56L58,57L57,65L59,66L58,72L54,78L56,77L60,78L56,90L54,93L49,97L53,97L57,95L60,92L60,95L58,98L55,107L55,112L54,114L56,110L60,109L58,115L58,129L61,138L62,127L64,121L66,119L68,121L68,132L70,141L77,158L82,165L80,156L81,137L84,147L90,158L92,160L100,177L101,181L101,188L103,182L103,169L101,163L102,159L106,164L110,172L109,166L111,165L124,178L127,184L127,189L110,205L106,207L96,206L90,207L86,211L86,215L89,212L95,213L125,212L128,211L154,211L165,212L169,214L168,210L165,207L146,204L156,196L163,189L164,194L167,186L169,188L171,180L175,180L184,183L191,187L205,202L223,227L232,236L238,240L247,244L257,246L266,246L268,245L268,242L264,237L267,236L276,237L276,233L263,220L236,189L239,189L247,193L249,193L256,197L265,200L273,201L258,185L228,157L231,156L234,158L239,159L239,156L237,151L224,134L207,115L196,95L188,84L176,73L160,64L158,62L155,61L150,56L145,46L147,46L139,37L142,36L146,38L129,21L127,20L130,19L128,17L122,14L120,12L106,6L95,4L79,5L69,8L61,15L50,17L44,17L27,22L16,28Z"/>
+    <path d="M151,180L153,184L153,189L138,204L135,206L123,207L118,205L125,198L131,194L140,186L143,179L147,176Z"/>
+    <path d="M97,114L104,135L98,129L96,125L95,116Z"/>
+    <path d="M125,68L140,68L147,71L130,72L126,73L122,75L119,78L115,86L115,99L117,108L122,118L128,127L133,133L148,147L146,148L135,140L123,128L114,115L114,113L111,108L108,98L108,88L110,81L113,76L117,72Z"/>
+    <path d="M88,53L100,60L104,66L103,70L99,64L101,77L99,80L97,76L97,72L95,68L95,79L90,94L89,101L87,98L87,83L82,93L81,98L82,113L81,116L76,107L75,102L76,86L70,96L69,92L71,88L71,84L68,85L68,83L73,79L74,73L76,69L78,72L78,78L80,71L79,67L80,64L84,70L84,77L84,64L83,59L86,62L89,68L89,71L89,67L87,62L89,59L92,62L87,55Z"/>
+    <path d="M28,38L34,38L42,36L59,36L66,37L69,41Z"/>
+    <path d="M10,40L16,33L24,27L40,22L47,23L43,26L47,26L50,28L49,30L57,30L65,32L71,35L73,37L70,38L65,36L57,35L43,35L21,38L13,41Z"/>
+    <path d="M89,20L92,23L92,28L89,31L84,32L80,29L79,27L87,28L89,25L85,24L85,22L87,20Z"/></g></svg></div>
+      <span class='brand'>IOSDecryptHub</span>
+      <div class='brand-meta' id='stats' role='status'></div>
+    </div>
+    <div class='top-actions'>
+      <div class='anchor'>
+        <button class='btn session-btn' id='processBtn' type='button' aria-controls='processPopover' aria-expanded='false' title='切换设备会话'>
+          <span class='session-info'><strong id='session-title'>设备会话</strong><small id='session-meta'>正在读取…</small></span>
+          <svg class='ico sm' aria-hidden='true'><use href='#i-chevron'/></svg>
+        </button>
+        <div class='dropdown right session-dropdown' id='processPopover' hidden>
+          <div class='dropdown-head'>切换设备会话</div>
+          <div id='idh-session' role='listbox' aria-label='切换设备会话'></div>
+          <div class='dropdown-divider'></div>
+          <div class='dropdown-head'>进程详情</div>
+          <dl class='proc-details' id='procinfo'></dl>
+        </div>
+      </div>
+      <button class='btn' id='diagBtn' type='button' title='查看设备与会话诊断'><svg class='ico sm' aria-hidden='true'><use href='#i-info'/></svg>诊断</button>
+      <button class='btn' id='mcpBtn' type='button'><svg class='ico sm' aria-hidden='true'><use href='#i-terminal'/></svg>MCP</button>
+      <button class='btn' id='settingsBtn' type='button'><svg class='ico sm' aria-hidden='true'><use href='#i-gear'/></svg>设置</button>
+    </div>
+  </header>
+  <nav class='module-tabs' id='tabbar' role='tablist' aria-label='事件分类'></nav>
+  <div class='toolbar' id='toolbar'>
+    <div class='toolbar-group toolbar-left'>
+      <label class='search-wrap'><svg class='ico sm' aria-hidden='true'><use href='#i-search'/></svg>
+        <input type='search' class='search-input' id='q' aria-label='搜索事件' placeholder='搜索序号、类别、阶段、关联 ID…' autocomplete='off'>
+        <kbd class='search-kbd' aria-hidden='true'>/</kbd>
+      </label>
+      <div class='anchor'>
+        <button class='btn' id='filterToggleBtn' type='button' aria-controls='filterMenu' aria-expanded='false'><svg class='ico sm' aria-hidden='true'><use href='#i-filter'/></svg><span id='filterCaption'>筛选</span><svg class='ico sm' aria-hidden='true'><use href='#i-chevron'/></svg></button>
+        <div class='dropdown' id='filterMenu' hidden>
+          <label class='dropdown-head' for='categoryFilter'>事件类别</label><select id='categoryFilter' class='filter-select'></select>
+          <div class='dropdown-divider'></div><div class='dropdown-head'>事件阶段</div><div id='phaseChoices' role='group' aria-label='事件阶段'></div>
+          <div class='dropdown-divider'></div><div class='dropdown-head'>列表排序</div><div id='sortChoices' role='group' aria-label='列表排序'></div>
+        </div>
+      </div>
+    </div>
+    <div class='toolbar-group toolbar-right'>
+      <span class='toolbar-stat' id='count'></span>
+      <button class='btn sm' id='hideUpdates' type='button' aria-pressed='false' title='只影响当前列表，不修改设备记录'>隐藏更新</button>
+      <button class='btn sm' id='tabPauseBtn' type='button'></button>
+      <div class='anchor'>
+        <button class='btn icon-only' id='toolbarMoreBtn' type='button' aria-label='更多操作' aria-controls='toolbarMenu' aria-expanded='false'><svg class='ico' aria-hidden='true'><use href='#i-more'/></svg></button>
+        <div class='dropdown right' id='toolbarMenu' hidden>
+          <button class='dropdown-item' type='button' id='tabDownloadBtn' data-action='export-board'>下载当前板块 <svg class='ico sm' aria-hidden='true'><use href='#i-download'/></svg></button>
+          <button class='dropdown-item' type='button' data-action='export-filter'>导出当前筛选结果 <svg class='ico sm' aria-hidden='true'><use href='#i-download'/></svg></button>
+          <button class='dropdown-item' type='button' data-action='export-session'>下载完整会话摘要</button>
+          <div class='dropdown-divider'></div>
+          <button class='dropdown-item' type='button' id='tabClearBtn' data-action='clear-display'>清空本板块显示</button>
+          <button class='dropdown-item' type='button' id='tabRestoreBtn' data-action='restore-display' hidden>恢复本板块显示</button>
+          <button class='dropdown-item' type='button' data-action='reset-filters'>清空搜索与筛选</button>
+          <button class='dropdown-item' type='button' data-action='refresh'>重新读取设备</button>
+          <div class='dropdown-divider'></div>
+          <button class='dropdown-item' type='button' data-action='config-json'>配置 JSON</button>
+          <button class='dropdown-item' type='button' data-action='wechat'>公众号</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class='notice warn' id='offlinebar' role='status' hidden></div>
+  <div class='notice' id='idh-session-notice' role='status' hidden></div>
+  <div class='workarea' id='workarea'>
+    <aside class='events-panel' aria-label='事件记录'>
+      <div class='events-header'><strong>事件记录</strong><div class='hstack'><span class='small-stat' id='eventListSummary'></span>
+        <button class='btn sm icon-only ghost' id='densityBtn' type='button' aria-label='切换列表密度' aria-pressed='false' title='切换列表密度'><svg class='ico sm' aria-hidden='true'><use href='#i-list'/></svg></button>
+      </div></div>
+      <div class='event-list' id='list' tabindex='0' aria-label='事件列表'></div>
+      <div class='event-footer'><span><span class='status-dot' id='footerDot'></span><span id='footerMode'>正在读取设备</span></span><span id='footerSort'>按时间倒序</span></div>
+    </aside>
+    <div class='splitter' id='splitter' tabindex='0' role='separator' aria-label='调整事件列表宽度' aria-orientation='vertical' aria-valuemin='260' aria-valuenow='410'></div>
+    <main class='detail-pane' id='detail' aria-label='事件详情'></main>
+  </div>
+  <div class='tool-workspace' id='toolWorkspace' hidden>
+    <main class='tool-page' id='fileWorkspace' hidden aria-labelledby='fileHeading'>
+      <div class='tool-header'><div><h2 id='fileHeading'>文件浏览</h2><p>按目录查看文件，在右侧查看所选文件的信息。</p></div><span class='pill tool-status'>设备目录未接入</span></div>
+      <div class='tool-grid'>
+        <section class='tool-surface'><h3>设备目录</h3><div class='tool-content'><span class='tool-path mono'>未取得设备目录</span><p class='tool-note'>此连接没有提供文件清单。</p></div></section>
+        <section class='tool-surface'><h3>文件详情</h3><div class='tool-content'><p class='tool-note'>需要设备文件接口，才能查看实际路径、属性和内容。</p></div></section>
+      </div>
+    </main>
+    <main class='tool-page' id='symbolWorkspace' hidden aria-labelledby='symbolHeading'>
+      <div class='tool-header'><div><h2 id='symbolHeading'>符号查询</h2><p>按模块组织符号，区分符号名和地址。</p></div><span class='pill tool-status'>设备符号索引未接入</span></div>
+      <section class='tool-surface'><h3>模块与符号</h3><table class='tool-table' aria-label='模块与符号'>
+        <thead><tr><th scope='col'>模块</th><th scope='col'>符号</th><th scope='col'>地址</th></tr></thead>
+        <tbody><tr><td colspan='3' class='tool-note'>当前 idhjd 没有返回模块符号索引，不显示模拟条目。</td></tr></tbody>
+      </table></section>
+    </main>
+    <main class='tool-page' id='dumpWorkspace' hidden aria-labelledby='dumpHeading'>
+      <div class='tool-header'><div><h2 id='dumpHeading'>Dump</h2><p>按 App 查看任务状态和产物，不使用事件时间线。</p></div><span class='pill tool-status'>设备任务接口未接入</span></div>
+      <section class='tool-surface' style='margin-bottom:12px'><h3>当前会话关联的 App</h3><div class='tool-content mono' id='dumpApp'>无当前会话</div></section>
+      <div class='tool-grid'>
+        <section class='tool-surface'><h3>任务状态</h3><div class='tool-content'><p class='tool-note'>当前连接不能创建或查看 Dump 任务。</p></div></section>
+        <section class='tool-surface'><h3>产物</h3><div class='tool-content'><p class='tool-note'>设备未提供产物清单，此处不显示会话摘要。</p></div></section>
+      </div>
+    </main>
+  </div>
+</div>
+<dialog class='diagnostic-dialog' id='diagMask' aria-labelledby='diagHeading'>
+  <div class='dialog-head'>
+    <div><h2 id='diagHeading'>设备诊断日志</h2><span class='helper'>当前设备与所选会话的状态快照</span></div>
+    <div class='hstack diag-actions'>
+      <button class='btn sm' id='diagRefresh' type='button'>重新读取</button>
+      <button class='btn sm' id='diagCopy' type='button' disabled>复制</button>
+      <button class='btn sm' id='diagDownload' type='button' disabled>下载 JSON</button>
+      <button class='btn sm icon-only ghost' id='diagClose' type='button' aria-label='关闭诊断日志'><svg class='ico' aria-hidden='true'><use href='#i-x'/></svg></button>
+    </div>
+  </div>
+  <div class='dialog-body'><pre class='code-body' id='diagBody' tabindex='0'>正在读取…</pre></div>
+</dialog>
+<dialog class='mini-dialog' id='clearDisplayMask' aria-labelledby='clearDisplayHeading'>
+  <div class='dialog-head'><h2 id='clearDisplayHeading'>清空本板块显示</h2></div>
+  <div class='dialog-body'>
+    <p class='helper' id='clearDisplayPrompt'></p>
+    <p class='helper'>只影响此电脑页面的列表。设备上的记录和完整板块导出都不会改变。</p>
+    <div class='hstack'><button class='btn' id='cancelClearDisplay' type='button'>取消</button><button class='btn primary' id='confirmClearDisplay' type='button'>清空显示</button></div>
+  </div>
+</dialog>
+<dialog class='settings-modal' id='setMask' aria-labelledby='settingsHeading'>
+  <div class='settings-layout'>
+    <aside class='settings-side'>
+      <div class='settings-side-title'>设置</div><div class='settings-side-caption'>会话与面板</div>
+      <nav id='setNav' aria-label='设置导航'>
+        <button class='setting-nav-item' type='button' data-setpage='capture'><svg class='ico sm' aria-hidden='true'><use href='#i-list'/></svg>捕获</button>
+        <button class='setting-nav-item' type='button' data-setpage='log'><svg class='ico sm' aria-hidden='true'><use href='#i-gear'/></svg>日志</button>
+        <button class='setting-nav-item' type='button' data-setpage='noise'><svg class='ico sm' aria-hidden='true'><use href='#i-filter'/></svg>噪声</button>
+        <button class='setting-nav-item' type='button' data-setpage='spoof'><svg class='ico sm' aria-hidden='true'><use href='#i-info'/></svg>伪装</button>
+        <button class='setting-nav-item' type='button' data-setpage='bypass'><svg class='ico sm' aria-hidden='true'><use href='#i-info'/></svg>绕过</button>
+        <button class='setting-nav-item' type='button' data-setpage='data'><svg class='ico sm' aria-hidden='true'><use href='#i-box'/></svg>数据</button>
+        <button class='setting-nav-item' type='button' data-setpage='rawcfg'><svg class='ico sm' aria-hidden='true'><use href='#i-code'/></svg>配置 JSON</button>
+      </nav>
+      <div class='settings-side-bottom'>IOSDecryptHub<br>设备会话 · idhjd</div>
+    </aside>
+    <section class='settings-main'>
+      <header class='settings-titlebar'><div><h2 id='settingsHeading'>会话摘要</h2><p id='settingsSubtitle'></p></div>
+        <button class='btn icon-only ghost' id='setClose' type='button' aria-label='关闭设置'><svg class='ico' aria-hidden='true'><use href='#i-x'/></svg></button>
+      </header>
+      <div class='settings-content' id='settingsContent'></div>
+      <footer class='settings-foot'>
+        <span class='dirty-status' id='rawHint' role='status'></span>
+        <div class='hstack'><button class='btn sm' id='cancelSettings' type='button'>取消</button><button class='btn sm primary' id='rawSave' type='button'>保存更改</button></div>
+      </footer>
+    </section>
+  </div>
+</dialog>
+<dialog class='mini-dialog' id='mcpMask' aria-labelledby='mcpHeading'>
+  <div class='dialog-head'><h2 id='mcpHeading'>MCP 连接</h2><button class='btn icon-only ghost' id='mcpClose' type='button' aria-label='关闭 MCP'><svg class='ico' aria-hidden='true'><use href='#i-x'/></svg></button></div>
+  <div class='dialog-body'>
+    <p class='helper'>在手机 Manager 复制设备会话只读凭证，传给客户端进程的 IDH_DEVICE_SESSION_TOKEN。</p>
+    <pre class='code-body' id='mcpCommand'></pre>
+    <p><button class='btn sm' id='mcpCopy' type='button'>复制命令</button></p>
+  </div>
+</dialog>
+<dialog class='mini-dialog' id='wechatMask' aria-labelledby='wechatHeading'>
+  <div class='dialog-head'><h2 id='wechatHeading'>公众号</h2><button class='btn icon-only ghost' id='wechatClose' type='button' aria-label='关闭公众号'><svg class='ico' aria-hidden='true'><use href='#i-x'/></svg></button></div>
+  <div class='dialog-body'><img src='/wechat-follow.png' alt='DecryptHub 公众号二维码' loading='lazy'></div>
+</dialog>
+<div class='toast' id='toast' role='status' hidden></div>
+<script src='/panel-device.js'></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const panel = window.IDHDevicePanel, profile = panel.profile;
+  const kinds = profile.summaryKinds, knownCategory = kinds.map((v) => v.key);
+  const phases = {entry:"进入", leave:"返回", complete:"完成", aborted:"中止"};
+  const kindLabel = {crypto:"加解密", network:"网络", observation:"观测", function:"函数"};
+  const sessionStatus = {waiting:"等待 Agent", observing:"观察中", closing:"确认尾部", ended:"已结束"};
+  const modules = [
+    ["crypto","加解密","code",[0,1,2,3]], ["sys","系统","box",[4,5]],
+    ["net","网络","terminal",[6]], ["keychain","Keychain","info",[7]],
+    ["other","其他","list",[8]], ["files","文件","box",null],
+    ["symbols","符号","code",null], ["dump","Dump","download",null]
+  ];
+  const fields = [
+    ["maxRecords","单会话摘要条数","条",1,2000,1,"setMaxEntries"],
+    ["maxBytes","单会话摘要大小","字节",512,2097152,1024,"setMaxFile"],
+    ["recordSeconds","单会话观察时长","秒",1,300,1,"setRecordSeconds"]
+  ];
+  const fieldNames = ["seq","sourceSeq","timeMs","category","kind","phase","update","callId","parentCallId","asyncTaskId"];
+  const preferenceKey = "idh_panel_preferences_v1";
+  const viewKey = "idh_workspace_view_v1";
+  const shortTime = new Intl.DateTimeFormat("zh-CN",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+  const longTime = new Intl.DateTimeFormat("zh-CN",{dateStyle:"medium",timeStyle:"medium"});
+  const empty = (title,text,iconName="list") => '<div class="empty-state"><div class="empty-icon">'+icon(iconName)+'</div><strong>'+esc(title)+'</strong><p>'+esc(text)+'</p></div>';
+  const all = (sel, node=document) => [...node.querySelectorAll(sel)];
+  function esc(x) {
+    return String(x ?? "").replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+  function icon(name,small=false) { return '<svg class="ico'+(small?' sm':'')+'" aria-hidden="true"><use href="#i-'+name+'"/></svg>'; }
+  const fmt = (formatter,ms) => Number.isFinite(ms) && ms > 0 && ms <= 8640000000000000 ? formatter.format(ms) : "—";
+  const json = (x) => JSON.stringify(x,null,2);
+  const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
+  const getCategory = (n) => kinds[n]?.label ?? "其他";
+  const getPhase = (p) => phases[p] || "摘要";
+  const cleanEvent = (event) => Object.fromEntries(fieldNames.filter((k)=>Object.hasOwn(event,k)).map((k)=>[k,event[k]]));
+  function loadLocal(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
+  function saveLocal(key,value) { try { localStorage.setItem(key,JSON.stringify(value)); return true; } catch { return false; } }
+  let prefs = (() => {
+    try {
+      const old = Number(localStorage.getItem("dh_displayCap"));
+      const previous = {advancedFilters:localStorage.getItem("dh_filters_open")==="1"};
+      if (profile.displayChoices.includes(old)) previous.displayCap = old;
+      return profile.mergePanel(profile.defaults(),loadLocal(preferenceKey) || previous);
+    } catch { return profile.defaults(); }
+  })();
+  const savedView = loadLocal(viewKey) || {};
+  const view = {compact:savedView.compact===true, width:Number.isFinite(savedView.width)?savedView.width:410};
+  let state = {device:null,session:null,events:[],network:"loading",tab:"crypto",phase:"all",category:"all",sort:"desc",hideUpdates:false,seq:null,detail:"data",limit:prefs.displayCap};
+  const displayByBoard = new Map();
+  function displayState(board=state.tab) {
+    if(!displayByBoard.has(board)) displayByBoard.set(board,{pauseAt:null,clearThrough:null});
+    return displayByBoard.get(board);
+  }
+  const highWater = () => state.session?.lastSeq ?? 0;
+  let currentFiltered = [], shownRows = [], currentMenu = "";
+  let requestSerial = 0, inFlight = false, pageReady = false;
+  let sessionOptionsKey = "";
+  let sheet = null, toastTimer;
+
+  function toast(text) {
+    $("toast").textContent = text;
+    $("toast").hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer=setTimeout(()=>$("toast").hidden=true,1500);
+  }
+  async function copy(text) {
+    if (!text) return;
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      const ta=document.createElement("textarea");
+      (document.querySelector("dialog[open]")||document.body).appendChild(ta);
+      ta.value=text; ta.select();
+      try { if (!document.execCommand("copy")) throw new Error(); }
+      catch { toast("无法复制，请手动选中内容"); return; }
+      finally { ta.remove(); }
+    }
+    toast("已复制");
+  }
+  function download(filename,text) {
+    downloadBlob(filename,new Blob([text],{type:"application/json"}));
+  }
+  function downloadBlob(filename,blob) {
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download=filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast("已下载 "+filename);
+  }
+
+  const menus = {processPopover:"processBtn",filterMenu:"filterToggleBtn",toolbarMenu:"toolbarMoreBtn"};
+  function setMenu(id,focus=false) {
+    const old=currentMenu;
+    currentMenu=id;
+    for(const [menu,button] of Object.entries(menus)) {
+      $(menu).hidden=menu!==id;
+      $(button).setAttribute("aria-expanded",menu===id?"true":"false");
+    }
+    if (old==="filterMenu" || id==="filterMenu") updateFilters();
+    if (focus && id) $(id).querySelector('[aria-selected="true"],button:not(:disabled),select')?.focus();
+    if (focus && !id && old) $(menus[old]).focus();
+  }
+  for(const [menu,button] of Object.entries(menus)) {
+    $(button).addEventListener("click",()=>setMenu(currentMenu===menu?"":menu));
+    $(button).addEventListener("keydown",(e)=>{
+      if(e.key==="ArrowDown"){e.preventDefault();setMenu(menu,true);}
+    });
+  }
+  document.addEventListener("click",(e)=>{
+    if(currentMenu && !e.target.closest("#"+currentMenu+",#"+menus[currentMenu])) setMenu("");
+  });
+  function sessionOptions(sessions,selected) {
+    const info=sessions.find((s)=>s.sessionId===selected);
+    $("session-title").textContent=info?.bundleId || "设备会话";
+    $("session-meta").textContent=info
+      ? [sessionStatus[info.status] || "会话",fmt(longTime,info.createdAtMs),info.count+" 条"].join(" · ")
+      : "暂无可读取的会话";
+    const key=JSON.stringify(sessions.map((s)=>[s.sessionId,s.bundleId,s.status,s.count,s.createdAtMs]))+selected;
+    if(key===sessionOptionsKey) return;
+    sessionOptionsKey=key;
+    const focused=$("idh-session").contains(document.activeElement)?document.activeElement.dataset.session:"";
+    $("idh-session").innerHTML=sessions.length?sessions.map((s)=>{
+      const selectedRow=s.sessionId===selected;
+      return '<button class="dropdown-item" type="button" role="option" aria-selected="'+selectedRow+'" data-session="'+esc(s.sessionId)+'"><span><strong>'+esc(s.bundleId)+'</strong><span class="dropdown-sub">'+esc(fmt(longTime,s.createdAtMs)+' · '+(sessionStatus[s.status]||"会话")+' · '+s.count+' 条')+'</span></span>'+(selectedRow?icon("check",true):"")+'</button>';
+    }).join(""):'<p class="dropdown-head">没有可读取的会话</p>';
+    if(focused && currentMenu==="processPopover") all("[data-session]",$("idh-session")).find((el)=>el.dataset.session===focused)?.focus();
+  }
+  $("idh-session").addEventListener("click",(event)=>{
+    const option=event.target.closest("[data-session]");
+    if(option && source.choose(option.dataset.session)) setMenu("",true);
+  });
+  $("idh-session").addEventListener("keydown",(event)=>{
+    if(!["ArrowDown","ArrowUp","Home","End"].includes(event.key)) return;
+    const options=all("[data-session]",$("idh-session")), current=options.indexOf(document.activeElement);
+    if(!options.length) return;
+    event.preventDefault();
+    const index=event.key==="Home"?0:event.key==="End"?options.length-1:
+      Math.max(0,Math.min(options.length-1,current+(event.key==="ArrowDown"?1:-1)));
+    options[index].focus();
+  });
+  const source=panel.workspace({
+    sessionOptions,
+    change:()=>{
+      if (!pageReady) return;
+      // A session selection never keeps the previous session's event detail.
+      displayByBoard.clear();
+      state={...state,session:null,events:[],seq:null,detail:"data",limit:prefs.displayCap};
+      render(true);
+      refresh(true);
+    }
+  });
+
+  function buildTabs() {
+    $("tabbar").innerHTML=modules.map(([key,label,name])=>'<button class="module-tab tab'+(key==="files"?" tool-boundary":"")+'" type="button" role="tab" data-tab="'+key+'" aria-selected="false">'+icon(name,true)+esc(label)+'<span class="tab-count"></span></button>').join("");
+  }
+  function moduleInfo() { return modules.find((row)=>row[0]===state.tab); }
+  function modeForTab() { return moduleInfo()?.[3]; }
+  function setModule(key) {
+    if(!modules.some((m)=>m[0]===key) || key===state.tab) return;
+    state.tab=key; state.category="all"; state.phase="all"; state.seq=null; state.detail="data";
+    $("q").value="";
+    state.limit=prefs.displayCap; setMenu(""); render(true);
+  }
+  $("tabbar").addEventListener("click",(event)=>{const button=event.target.closest("[data-tab]"); if(button)setModule(button.dataset.tab);});
+  $("tabbar").addEventListener("keydown",(event)=>{
+    if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) return;
+    const tabs=all("[data-tab]",$("tabbar")), index=tabs.indexOf(event.target);
+    if(index<0) return;
+    const next=event.key==="Home"?0:event.key==="End"?tabs.length-1:
+      (index+tabs.length+(event.key==="ArrowRight"?1:-1))%tabs.length;
+    event.preventDefault(); setModule(tabs[next].dataset.tab); tabs[next].focus();
+  });
+  function updateFilters() {
+    const cats=modeForTab()||[];
+    const k=cats.join(",");
+    if($("categoryFilter").dataset.options!==k) {
+      $("categoryFilter").replaceChildren(new Option("全部类别","all"),...cats.map((n)=>new Option(getCategory(n),String(n))));
+      $("categoryFilter").dataset.options=k;
+    }
+    $("categoryFilter").value=state.category;
+    const choices=(entries,key)=>entries.map(([v,text])=>'<button type="button" class="dropdown-item" data-'+key+'="'+v+'" aria-checked="'+String(state[key]===v)+'">'+esc(text)+(state[key]===v?icon("check",true):"")+'</button>').join("");
+    $("phaseChoices").innerHTML=choices([["all","全部阶段"],...Object.entries(phases)],"phase");
+    $("sortChoices").innerHTML=choices([["desc","最新优先"],["asc","最早优先"]],"sort");
+    const n=Number(state.category!=="all")+Number(state.phase!=="all")+Number(state.sort!=="desc");
+    $("filterCaption").textContent=n?"筛选 · "+n:"筛选";
+  }
+  function resetWindow() { state.limit=prefs.displayCap; render(true); }
+  $("categoryFilter").addEventListener("change",(e)=>{state.category=e.target.value;resetWindow();});
+  $("filterMenu").addEventListener("click",(e)=>{
+    const b=e.target.closest("[data-phase],[data-sort]"); if(!b) return;
+    if(b.dataset.phase) state.phase=b.dataset.phase;
+    if(b.dataset.sort) state.sort=b.dataset.sort;
+    resetWindow(); setMenu("",true);
+  });
+  $("q").addEventListener("input",resetWindow);
+  $("hideUpdates").addEventListener("click",()=>{state.hideUpdates=!state.hideUpdates;resetWindow();});
+  $("tabPauseBtn").addEventListener("click",()=>{
+    if(!state.session||!modeForTab())return;
+    const board=displayState();
+    board.pauseAt=board.pauseAt===null?highWater():null;
+    render();
+    if(board.pauseAt===null && prefs.autoRefresh)refresh(true);
+  });
+  $("densityBtn").addEventListener("click",()=>{
+    view.compact=!view.compact; saveLocal(viewKey,view);
+    $("list").classList.toggle("compact",view.compact);
+    $("densityBtn").setAttribute("aria-pressed",String(view.compact));
+  });
+
+  function renderProcessInfo() {
+    const session=state.session;
+    const apps=Array.isArray(state.device?.apps)?state.device.apps:[];
+    const active=session
+      ? apps.find((app)=>app.bundleId===session.bundleId && session.processGeneration && app.processGeneration===session.processGeneration)
+      : apps[0];
+    const stale=state.network==="offline";
+    const label=active?(stale?"上次登记为在线":"在线，已登记"):
+      session?.status==="ended"?"历史会话，未见对应进程在线":session?"未见登记":"无在线进程";
+    const pairs=[["状态",label],
+      ["App",active?.bundleId??session?.bundleId??"—"],
+      [active?"当前 PID":"会话 PID",active?.pid??session?.pid??"—"],
+      ["进程代",active?.processGeneration??session?.processGeneration??"—"]];
+    if(session)pairs.push(["会话 ID",session.sessionId],["已提交",String(session.count)+" 条"],["最新序号",session.lastSeq??"—"]);
+    $("procinfo").innerHTML=pairs.map(([label,value])=>'<dt>'+esc(label)+'</dt><dd class="mono">'+esc(value)+'</dd>').join("");
+    $("dumpApp").textContent=session?.bundleId??"无当前会话";
+  }
+  function renderIndicators() {
+    const online=state.network==="online", offline=state.network==="offline";
+    $("stats").innerHTML='<span class="status-dot '+(online?"ok":offline?"off":"")+'"></span><span>'+
+      (online?"设备在线":offline?"设备离线":"正在连接")+'</span>'+
+      (state.device?.version?'<span class="status-divider protocol"></span><span class="protocol">会话协议 '+esc(state.device.version)+'</span>':"");
+    $("offlinebar").hidden=!offline;
+    $("offlinebar").textContent=offline?"暂时无法读取设备。已加载的摘要保留，可从更多菜单重试。":"";
+    const mode=state.session?.status;
+    const boardDisplay=displayState(), paused=boardDisplay.pauseAt!==null, cleared=boardDisplay.clearThrough!==null;
+    $("footerMode").textContent=paused?"本板块已暂停":cleared?"本板块显示已清空":mode==="ended"?"历史会话 · 只读":
+      mode?(sessionStatus[mode]||"设备会话"):online?"暂无会话":"正在连接";
+    $("footerDot").className="status-dot"+(paused||cleared?" warn":mode==="observing"?" ok":"");
+    $("footerSort").textContent=state.sort==="asc"?"按时间正序":"按时间倒序";
+    $("count").innerHTML='<strong>'+currentFiltered.length+'</strong> / '+state.events.length+' 条';
+    $("eventListSummary").textContent=shownRows.length===currentFiltered.length?shownRows.length+" 条":shownRows.length+" / "+currentFiltered.length+" 条";
+    $("hideUpdates").setAttribute("aria-pressed",String(state.hideUpdates));
+    $("hideUpdates").textContent=state.hideUpdates?"显示更新":"隐藏更新";
+    const pause=$("tabPauseBtn");
+    pause.disabled=!state.session||!modeForTab();
+    pause.setAttribute("aria-pressed",String(paused));
+    pause.innerHTML=icon(paused?"play":"pause",true)+(paused?"继续本板块":"暂停本板块");
+    $("tabClearBtn").disabled=!state.session||!modeForTab();
+    $("tabRestoreBtn").hidden=!cleared;
+    $("tabDownloadBtn").disabled=!state.session||!modeForTab();
+    renderProcessInfo();
+    for(const tab of all("[data-tab]",$("tabbar"))) {
+      const option=modules.find((m)=>m[0]===tab.dataset.tab);
+      const active=option[0]===state.tab;
+      tab.setAttribute("aria-selected",String(active)); tab.tabIndex=active?0:-1;
+      const count=option[3]?state.events.reduce((sum,e)=>sum+Number(option[3].includes(e.category)),0):0;
+      tab.querySelector(".tab-count").textContent=count?String(count):"";
+      tab.title=option[3]&&displayByBoard.get(option[0])?.pauseAt!=null?option[1]+" · 显示已暂停":option[1];
+    }
+  }
+  const titleFor = (e) => getCategory(e.category)+"事件";
+  function filterRows() {
+    const q=$("q").value.trim().toLowerCase(), cats=modeForTab();
+    if (!cats) return [];
+    const {pauseAt,clearThrough}=displayState();
+    return state.events.filter((e)=>cats.includes(e.category) && prefs.summaryCategories[knownCategory[e.category]]!==false &&
+      (pauseAt===null||e.seq<=pauseAt) && (clearThrough===null||e.seq>clearThrough) &&
+      (state.category==="all"||Number(state.category)===e.category) && (!state.hideUpdates||!e.update) &&
+      (state.phase==="all"||state.phase===e.phase) &&
+      (!q||["#"+e.seq,e.sourceSeq,getCategory(e.category),getPhase(e.phase),e.phase,e.kind,e.callId,e.parentCallId,e.asyncTaskId,fmt(longTime,e.timeMs)].some((item)=>String(item??"").toLowerCase().includes(q))))
+      .sort((a,b)=>(state.sort==="asc"?1:-1)*((a.timeMs-b.timeMs)||(a.seq-b.seq)));
+  }
+  function eventRow(e) {
+    const isSelected=e.seq===state.seq;
+    return '<button class="event-row row cat-'+(knownCategory[e.category]||"other")+(isSelected?" selected":"")+'" type="button" data-seq="'+esc(e.seq)+'" aria-pressed="'+isSelected+'">'+
+      '<span class="event-index">#'+esc(e.seq)+'</span><span class="event-body"><span class="event-top"><span class="event-name">'+esc(titleFor(e))+'</span><time class="event-time">'+esc(fmt(shortTime,e.timeMs))+'</time></span>'+
+      '<span class="event-sub"><span class="pill phase'+(e.phase==="aborted"?" aborted":"")+'">'+esc(getPhase(e.phase))+'</span>'+(e.update?'<span class="pill">更新</span>':"")+
+      '<span class="event-source">'+esc(e.callId?"关联 "+e.callId:"原记录 #"+(e.sourceSeq??"—"))+'</span></span></span></button>';
+  }
+  function render(reset=false) {
+    const list=$("list"), top=reset?0:list.scrollTop;
+    const focused=list.contains(document.activeElement) && document.activeElement.dataset.seq;
+    const eventTab=Boolean(modeForTab());
+    $("toolbar").hidden=!eventTab;
+    $("workarea").hidden=!eventTab;
+    $("toolWorkspace").hidden=eventTab;
+    for(const [tab,id] of Object.entries({files:"fileWorkspace",symbols:"symbolWorkspace",dump:"dumpWorkspace"})) $(id).hidden=state.tab!==tab;
+    if(!eventTab) {
+      resetByteOwner();
+      currentFiltered=[];shownRows=[];
+      if(currentMenu==="filterMenu"||currentMenu==="toolbarMenu")setMenu("");
+      renderIndicators();
+      return;
+    }
+    currentFiltered=filterRows();
+    shownRows=currentFiltered.slice(0,state.limit);
+    if(state.seq!==null && !currentFiltered.some((e)=>e.seq===state.seq)) {state.seq=null;state.detail="data";}
+    list.classList.toggle("compact",view.compact);
+    $("densityBtn").setAttribute("aria-pressed",String(view.compact));
+    if(shownRows.length) {
+      list.innerHTML=shownRows.map(eventRow).join("")+(shownRows.length<currentFiltered.length?'<button type="button" class="btn sm load-more" id="loadMoreBtn">继续加载 · '+(currentFiltered.length-shownRows.length)+' 条</button>':"");
+    } else {
+      const cleared=displayState().clearThrough!==null;
+      const title=state.network==="loading"||inFlight&&!state.session?"正在读取设备会话":
+        cleared?"本板块显示已清空":state.session?"当前筛选没有结果":"暂无会话摘要";
+      const description=cleared?"设备记录未删除。在更多菜单可恢复显示。":
+        state.session?"切换分类或清除筛选可查看其他摘要。":"已保存的摘要会在这里列出。";
+      list.innerHTML=empty(title,description);
+    }
+    list.scrollTop=top;
+    if(focused) all("[data-seq]",list).find((e)=>e.dataset.seq===focused)?.focus({preventScroll:true});
+    renderIndicators();
+    if(currentMenu!=="filterMenu") updateFilters();
+    renderDetail();
+  }
+  const kv = (rows) => rows.map(([name,value])=>'<div class="kv-row"><span class="key">'+esc(name)+'</span><span class="val mono">'+esc(value??"—")+'</span></div>').join("");
+  const card=(title,rows)=>'<section class="data-card"><header class="data-card-head">'+esc(title)+'</header>'+kv(rows)+'</section>';
+  const metrics=(rows)=>'<div class="metric-grid">'+rows.map(([title,v])=>'<div class="metric"><div class="metric-label">'+esc(title)+'</div><div class="metric-value" title="'+esc(v)+'">'+esc(v)+'</div></div>').join("")+'</div>';
+  const detailEvent=()=>state.seq===null?null:state.events.find((e)=>e.seq===state.seq);
+  const byteOwner=()=>state.session&&state.seq!==null?state.session.sessionId+"/"+state.seq:"";
+  const byteFormats=[["bytes","原始字节"],["hex","十六进制"],["base64","Base64"]];
+  const bytePreviewLimit=64*1024;
+  let localBinary=null, binaryOwner="", binaryMessage="", binaryError=false, binarySerial=0, binaryRevision=0;
+
+  // UI-local, deliberately not connected to any device input/output fields.
+  // All encodings take the same explicitly selected bytes; no summary-to-bytes fallback.
+  function formatLocalBytes(bytes,mode) {
+    if(mode==="base64") {
+      let binary="";
+      for(let start=0;start<bytes.length;start+=8192) binary+=String.fromCharCode(...bytes.subarray(start,start+8192));
+      return btoa(binary);
+    }
+    const lines=[];
+    for(let start=0;start<bytes.length;start+=16) {
+      const block=bytes.subarray(start,start+16);
+      if(mode==="hex") lines.push(Array.from(block,(n)=>n.toString(16).padStart(2,"0").toUpperCase()).join(" "));
+      else {
+        const offset=start.toString(16).toUpperCase().padStart(8,"0");
+        const values=Array.from(block,(n)=>String(n).padStart(3,"0")).join(" ").padEnd(63," ");
+        const printable=Array.from(block,(n)=>n>=32&&n<=126?String.fromCharCode(n):".").join("");
+        lines.push(offset+"  "+values+"  |"+printable+"|");
+      }
+    }
+    return lines.join("\n");
+  }
+  function resetByteOwner() {
+    const owner=byteOwner();
+    if(owner!==binaryOwner) {
+      binaryOwner=owner;localBinary=null;binaryMessage="";binaryError=false;++binarySerial;++binaryRevision;
+    }
+  }
+  function renderDataDetail() {
+    const available=Boolean(localBinary), selected=localBinary?.mode??"bytes";
+    const controls=byteFormats.map(([key,label])=>'<button class="btn sm" type="button" data-byte-mode="'+key+'" aria-pressed="'+(key===selected)+'"'+(available?"":" disabled")+'>'+label+'</button>').join("");
+    const value=available?formatLocalBytes(localBinary.bytes,selected):"";
+    const receipt=available?'<div class="byte-receipt"><span>来源：本地文件</span><span class="mono">'+esc(localBinary.name)+'</span><span class="mono">'+localBinary.bytes.length+' B</span></div>':"";
+    const information=selected==="bytes"?"每个字节以 0–255 的十进制值显示；左侧是偏移，右侧仅预览可打印字符。":
+      selected==="hex"?"每两个十六进制字符对应一个字节。":"按当前完整原始字节编码，不改变顺序或内容。";
+    const preview=available?'<p class="byte-note">'+esc(information)+'</p><pre tabindex="0" class="code-body byte-view" id="byteViewText" data-format="'+selected+'">'+esc(value||"（0 字节）")+'</pre>':
+      '<p class="byte-note">未载入本地字节。三个视图不会把事件摘要当成原始数据。</p>';
+    return '<div class="io-panels">'+
+      '<section class="io-section in-card"><header class="io-card-head"><h3>输入 / INPUT</h3><span class="io-status">设备未提供原始字节</span></header><p>当前会话只保存事件摘要，不包含输入数据。</p></section>'+
+      '<section class="io-section out-card"><header class="io-card-head"><h3>输出 / OUTPUT</h3><span class="io-status">设备未提供原始字节</span></header><p>不从摘要推测输出内容或字节数。设备保存的字段仍可在「事件信息」和「摘要 JSON」中查看。</p></section></div>'+
+      '<section class="byte-preview" aria-labelledby="bytePreviewHeading"><div class="byte-header"><div><h3 id="bytePreviewHeading">本地字节预览</h3><p class="byte-help">仅验证你选择的文件；不上传、不保存，也不归入这条设备事件。</p></div>'+
+      '<div class="hstack"><button class="btn sm" type="button" id="chooseByteFile">载入本地文件</button>'+
+      '<input type="file" id="byteFile" hidden>'+ (available?'<button class="btn sm ghost" type="button" id="clearBytePreview">清除</button>':"")+'</div></div>'+
+      '<div class="byte-options" role="group" aria-label="字节显示格式">'+controls+
+      (available?'<button class="btn sm ghost" type="button" id="copyByteFormat">复制当前格式</button><button class="btn sm ghost" type="button" id="exportOriginalBytes">下载原始字节</button>':"")+'</div>'+
+      (binaryMessage?'<p class="byte-note'+(binaryError?' error':'')+'" role="status">'+esc(binaryMessage)+'</p>':"")+receipt+preview+'</section>';
+  }
+  function repaintBinary(focusSelector) {
+    const scroll=$("detail").querySelector(".detail-scroll")?.scrollTop??0;
+    ++binaryRevision;
+    renderDetail();
+    const next=$("detail").querySelector(".detail-scroll");
+    if(next)next.scrollTop=scroll;
+    if(focusSelector)$("detail").querySelector(focusSelector)?.focus({preventScroll:true});
+  }
+  let detailKey="";
+  function renderDetail() {
+    resetByteOwner();
+    const event=detailEvent();
+    const key=event?json([state.session?.sessionId,state.session?.status,event,state.detail,state.detail==="data"?binaryRevision:0]):"empty:"+state.tab;
+    if(detailKey===key) return;
+    detailKey=key;
+    if(!event) {
+      $("detail").innerHTML=empty("选择一条记录","左侧为当前设备会话的事件，详情会显示在这里。","info");
+      return;
+    }
+    const detailTabs=[["data","数据详情"],["event","事件信息"],["context","关联信息"],["raw","摘要 JSON"]];
+    const session=state.session;
+    const sourceRows=[["来源 App",session?.bundleId],["会话 ID",session?.sessionId],["会话状态",sessionStatus[session?.status]]];
+    const eventRows=[["会话序号",event.seq],["原记录序号",event.sourceSeq],["事件类别",getCategory(event.category)],
+      ["事件类型",kindLabel[event.kind]||event.kind],["事件阶段",getPhase(event.phase)],["记录更新",event.update?"是":"否"]];
+    const contextRows=[["关联 ID",event.callId],["上级关联",event.parentCallId],["异步任务",event.asyncTaskId]];
+    const content=state.detail==="data"?renderDataDetail():
+      state.detail==="raw"?'<h3 class="content-title">设备保存的事件摘要</h3><pre class="code-body">'+esc(json(cleanEvent(event)))+'</pre>':
+      state.detail==="context"?'<h3 class="content-title">关联与来源</h3><div class="box-grid">'+card("关联信息",contextRows)+card("会话信息",sourceRows)+'</div>':
+      '<h3 class="content-title">事件摘要</h3>'+metrics([["会话序号","#"+event.seq],["原记录序号","#"+(event.sourceSeq??"—")],["阶段",getPhase(event.phase)],["事件时间",fmt(shortTime,event.timeMs)]])+
+      '<div class="box-grid">'+card("基本信息",eventRows)+card("会话与来源",sourceRows)+'</div><h3 class="content-title">关联信息</h3><div class="kv-table">'+kv(contextRows)+'</div>';
+    $("detail").innerHTML='<header class="detail-header"><div><div class="detail-title-row"><h2>'+esc(titleFor(event))+'</h2><span class="pill phase">'+esc(getPhase(event.phase))+'</span></div>'+
+      '<div class="detail-subtitle"><span class="mono">#'+esc(event.seq)+'</span><span>'+esc(fmt(longTime,event.timeMs))+'</span><span>'+esc(session?.bundleId)+'</span></div></div>'+
+      '<div class="detail-actions"><button class="btn sm" type="button" data-action="copy-event">'+icon("copy",true)+'复制摘要</button><button class="btn sm icon-only" type="button" data-action="export-event" aria-label="下载摘要 JSON" title="下载摘要 JSON">'+icon("download",true)+'</button></div></header>'+
+      '<nav class="detail-tabs" role="tablist" aria-label="事件详情方式">'+detailTabs.map(([key,label])=>'<button class="detail-tab" type="button" role="tab" data-detail="'+key+'" aria-selected="'+String(state.detail===key)+'">'+esc(label)+'</button>').join("")+'</nav>'+
+      '<div class="detail-scroll"><div class="content-max">'+content+'</div></div>';
+  }
+  function selectEvent(seq,keyboard=false) {
+    if(!shownRows.some((e)=>e.seq===seq)) return;
+    if(state.seq!==seq) {state.seq=seq;state.detail="data";}
+    for(const el of all("[data-seq]",$("list"))) {
+      const selected=Number(el.dataset.seq)===seq; el.classList.toggle("selected",selected); el.setAttribute("aria-pressed",String(selected));
+      if(selected&&keyboard){el.focus({preventScroll:true});el.scrollIntoView({block:"nearest"});}
+    }
+    renderDetail();
+  }
+  $("list").addEventListener("click",(e)=>{
+    if(e.target.closest("#loadMoreBtn")) {state.limit+=prefs.displayCap;render();return;}
+    const row=e.target.closest("[data-seq]"); if(row)selectEvent(Number(row.dataset.seq));
+  });
+  $("detail").addEventListener("click",(e)=>{
+    const button=e.target.closest("[data-detail]");
+    if(button) {state.detail=button.dataset.detail;renderDetail();$("detail").querySelector('[aria-selected="true"]')?.focus();return;}
+    const control=e.target.closest("button");
+    if(!control||control.disabled||state.detail!=="data")return;
+    if(control.id==="chooseByteFile"){$("byteFile").click();return;}
+    if(control.id==="clearBytePreview"){
+      ++binarySerial;localBinary=null;binaryError=false;binaryMessage="本地预览已清除。";repaintBinary("#chooseByteFile");return;
+    }
+    if(!localBinary||binaryOwner!==byteOwner())return;
+    const mode=control.dataset.byteMode;
+    if(byteFormats.some(([k])=>k===mode)){
+      localBinary.mode=mode;repaintBinary('[data-byte-mode="'+mode+'"]');
+    }
+    if(control.id==="copyByteFormat"){
+      if(localBinary.bytes.length)copy(formatLocalBytes(localBinary.bytes,localBinary.mode));
+      else toast("空文件，没有可复制的字节");
+    }
+    if(control.id==="exportOriginalBytes"){
+      downloadBlob("preview-"+(localBinary.name||"bytes.bin"),new Blob([localBinary.bytes],{type:"application/octet-stream"}));
+    }
+  });
+  $("detail").addEventListener("change",async(e)=>{
+    if(e.target.id!=="byteFile")return;
+    const file=e.target.files?.[0];
+    e.target.value="";
+    if(!file||!byteOwner())return;
+    const owner=byteOwner(), serial=++binarySerial;
+    if(file.size>bytePreviewLimit){
+      binaryMessage="文件超过 64 KiB，未载入也没有截取。";binaryError=true;repaintBinary("#chooseByteFile");return;
+    }
+    try {
+      const bytes=new Uint8Array(await file.arrayBuffer());
+      if(serial!==binarySerial||owner!==byteOwner())return;
+      localBinary={name:file.name,bytes,mode:"bytes"};
+      binaryError=false;binaryMessage="";
+      repaintBinary('[data-byte-mode="bytes"]');
+    } catch {
+      if(serial!==binarySerial||owner!==byteOwner())return;
+      binaryError=true;binaryMessage="未能读取本地文件。";repaintBinary("#chooseByteFile");
+    }
+  });
+  document.addEventListener("keydown",(e)=>{
+    if(e.key==="Escape" && currentMenu){e.preventDefault();setMenu("",true);return;}
+    if(document.querySelector("dialog[open]") || e.target.closest("input,textarea,select,[contenteditable]")) return;
+    if(e.key==="/"&&!e.ctrlKey&&!e.metaKey) {e.preventDefault();$("q").focus();return;}
+    if(!shownRows.length||currentMenu||!["j","k","ArrowDown","ArrowUp"].includes(e.key)) return;
+    if(e.key.startsWith("Arrow")&&!$("list").contains(document.activeElement)) return;
+    const prev=shownRows.findIndex((row)=>row.seq===state.seq);
+    const dir=e.key==="j"||e.key==="ArrowDown"?1:-1;
+    e.preventDefault();selectEvent(shownRows[Math.max(0,Math.min(shownRows.length-1,prev<0?0:prev+dir))].seq,true);
+  });
+
+  function setWidth(px,persist=false) {
+    const area=$("workarea").clientWidth;
+    if(!area)return;
+    const max=Math.max(260,Math.min(Math.round(area*.65),area-245));
+    const min=window.innerWidth<=880?215:260;
+    view.width=Math.min(max,Math.max(min,Math.round(px)));
+    document.documentElement.style.setProperty("--left-width",view.width+"px");
+    const splitter=$("splitter");
+    splitter.setAttribute("aria-valuemin",String(min));
+    splitter.setAttribute("aria-valuemax",String(max));
+    splitter.setAttribute("aria-valuenow",String(view.width));
+    if(persist) saveLocal(viewKey,view);
+  }
+  const splitter=$("splitter");
+  splitter.addEventListener("pointerdown",(e)=>{
+    if(e.button!==0) return; splitter.setPointerCapture(e.pointerId);splitter.classList.add("dragging");e.preventDefault();
+  });
+  splitter.addEventListener("pointermove",(e)=>{if(splitter.hasPointerCapture(e.pointerId))setWidth(e.clientX-$("workarea").getBoundingClientRect().left);});
+  splitter.addEventListener("lostpointercapture",()=>{splitter.classList.remove("dragging");setWidth(view.width,true);});
+  splitter.addEventListener("keydown",(e)=>{
+    if(e.key==="ArrowLeft"||e.key==="ArrowRight") {e.preventDefault();e.stopPropagation();setWidth(view.width+(e.key==="ArrowLeft"?-20:20),true);}
+  });
+  window.addEventListener("resize",()=>setWidth(view.width));
+
+  async function refresh(force=false) {
+    if(inFlight&&!force) return;
+    const serial=++requestSerial; inFlight=true;
+    try {
+      const next=await source.snapshot();
+      if(serial!==requestSerial) return;
+      const changed=state.session?.sessionId!==next.session?.sessionId;
+      const repaint=changed||state.events!==next.events||state.network!=="online";
+      if(changed) {displayByBoard.clear();state.seq=null;state.detail="data";state.limit=prefs.displayCap;}
+      state={...state,...next,network:"online"};
+      inFlight=false;
+      if(repaint) render(changed); else renderIndicators();
+    } catch {
+      if(serial!==requestSerial) return;
+      inFlight=false;
+      state.network="offline"; render();
+    }
+  }
+  function exportEvents(scope) {
+    if(!state.session){toast("没有可导出的会话");return;}
+    const categories=modeForTab();
+    if(scope!=="session"&&!categories){toast("请先选择事件板块");return;}
+    const events=(scope==="filtered"?currentFiltered:scope==="board"?state.events.filter((event)=>categories.includes(event.category)):state.events).map(cleanEvent);
+    const suffix=scope==="board"?"-"+state.tab:scope==="filtered"?"-filtered":"";
+    download("idh-session-"+state.session.sessionId+suffix+".json",json({session:state.session,events}));
+  }
+  let pendingClear=null;
+  function askClearDisplay() {
+    if(!state.session||!modeForTab())return;
+    pendingClear={tab:state.tab,session:state.session.sessionId};
+    $("clearDisplayPrompt").textContent="清空「"+moduleInfo()[1]+"」当前显示的已保存摘要？";
+    $("clearDisplayMask").showModal();
+  }
+  $("cancelClearDisplay").addEventListener("click",()=>$("clearDisplayMask").close());
+  $("clearDisplayMask").addEventListener("close",()=>{pendingClear=null;});
+  $("confirmClearDisplay").addEventListener("click",()=>{
+    const target=pendingClear;
+    if(target&&target.session===state.session?.sessionId&&target.tab===state.tab) {
+      const board=displayState(target.tab);
+      board.clearThrough=board.pauseAt??highWater();
+      state.seq=null;state.detail="data";state.limit=prefs.displayCap;render(true);
+      toast("已清空本板块显示，设备记录未删除");
+    }
+    $("clearDisplayMask").close();
+  });
+  document.addEventListener("click",(e)=>{
+    const action=e.target.closest("[data-action]")?.dataset.action; if(!action)return;
+    const event=detailEvent();
+    if(action==="export-board")exportEvents("board");
+    if(action==="export-filter")exportEvents("filtered");
+    if(action==="export-session")exportEvents("session");
+    if(action==="copy-event"&&event)copy(json(cleanEvent(event)));
+    if(action==="export-event"&&event)download("event-"+event.seq+".json",json(cleanEvent(event)));
+    if(action==="reset-filters"){state.category="all";state.phase="all";state.sort="desc";state.hideUpdates=false;$("q").value="";resetWindow();}
+    if(action==="clear-display")askClearDisplay();
+    if(action==="restore-display"){displayState().clearThrough=null;resetWindow();}
+    if(action==="refresh")refresh(true);
+    if(action==="config-json")openSettings("rawcfg");
+    if(action==="wechat")$("wechatMask").showModal();
+    setMenu("");
+  });
+  $("mcpBtn").addEventListener("click",()=>{
+    $("mcpCommand").textContent='idh mcp --device-session --endpoint "'+panel.endpoint+'"';
+    setMenu("");$("mcpMask").showModal();
+  });
+  $("mcpCopy").addEventListener("click",()=>copy($("mcpCommand").textContent));
+  $("mcpClose").addEventListener("click",()=>$("mcpMask").close());
+  $("wechatClose").addEventListener("click",()=>$("wechatMask").close());
+  let diagText="", diagEpoch=0;
+  async function readDiagnostics() {
+    const epoch=++diagEpoch;
+    diagText="";
+    $("diagBody").textContent="正在读取当前设备与会话…";
+    for(const name of ["diagRefresh","diagCopy","diagDownload"])$(name).disabled=true;
+    try {
+      const r=await panel.request("/api/diag");
+      if(!r.ok)throw new Error("设备诊断返回 "+r.status);
+      const data=await r.json();
+      if(epoch!==diagEpoch||!$("diagMask").open)return;
+      diagText=json(data);
+      $("diagBody").textContent=diagText;
+      $("diagCopy").disabled=false;
+      $("diagDownload").disabled=false;
+    } catch(error) {
+      if(epoch===diagEpoch&&$("diagMask").open)$("diagBody").textContent="读取失败："+error.message;
+    } finally {
+      if(epoch===diagEpoch)$("diagRefresh").disabled=false;
+    }
+  }
+  $("diagBtn").addEventListener("click",()=>{setMenu("");$("diagMask").showModal();readDiagnostics();});
+  $("diagRefresh").addEventListener("click",readDiagnostics);
+  $("diagClose").addEventListener("click",()=>$("diagMask").close());
+  $("diagMask").addEventListener("close",()=>{++diagEpoch;diagText="";});
+  $("diagCopy").addEventListener("click",()=>copy(diagText));
+  $("diagDownload").addEventListener("click",()=>{if(diagText)download("idhjd-device-diagnostics.json",diagText);});
+
+  const titles={
+    capture:["会话摘要显示","按类别选择哪些已保存摘要出现在电脑列表中。"],
+    log:["日志设置","设备限额从下一场会话起生效，面板偏好立即应用。"],
+    noise:["噪声","原始输入和详情不在设备摘要中。"],
+    spoof:["伪装","设备会话不提供设备信息修改。"],
+    bypass:["绕过","设备会话不提供绕过检测的设置。"],
+    data:["数据","从当前设备会话导出已保存的摘要。"],
+    rawcfg:["配置 JSON","读取设备限额与面板偏好；可复制、下载或导入到另一台设备。"]
+  };
+  const hasPanelChange=()=>sheet&&!same(sheet.panel,prefs);
+  const hasDeviceChange=()=>sheet?.loaded&&fields.some(([key])=>sheet.limits[key]!==sheet.loaded.deviceSession[key]);
+  const changedSettings=()=>Boolean(sheet?.rawEdited||hasPanelChange()||hasDeviceChange());
+  function feedback(text,type="") {
+    $("rawHint").textContent=text;
+    $("rawHint").className="dirty-status"+(type?" "+type:"");
+  }
+  function updateSave(showStatus=true) {
+    if(!sheet) return;
+    $("settingsContent").inert=sheet.busy;
+    $("rawSave").disabled=sheet.busy||!changedSettings();
+    if(showStatus) feedback(sheet.busy?"正在处理…":changedSettings()?"有未保存的更改":"当前配置已保存",changedSettings()?"warn":"");
+  }
+  async function deviceConfigRequest(body) {
+    const response=await panel.request(body===undefined?"/api/settings/export":"/api/settings/import",
+      body===undefined?undefined:{method:"POST",body:JSON.stringify(body)});
+    const value=await response.json();
+    if(!response.ok) throw new Error(value.error||"无法读取设备配置");
+    if(typeof value.revision!=="string") throw new Error("设备未返回配置版本");
+    return {revision:value.revision,deviceSession:profile.deviceLimits(value.deviceSession,true)};
+  }
+  function openSettings(page="capture") {
+    if($("setMask").open) return;
+    setMenu("");
+    sheet={page,panel:profile.mergePanel(prefs,{}),loaded:null,limits:null,busy:false,error:"",rawEdited:false};
+    $("setMask").showModal();
+    setSettingsPage(page);
+    loadSettings(false);
+  }
+  async function loadSettings(reset) {
+    const working=sheet; if(!working||working.busy)return;
+    working.busy=true; updateSave();
+    try {
+      const reply=await deviceConfigRequest();
+      if(sheet!==working)return;
+      working.loaded=reply; working.limits={...reply.deviceSession}; working.error="";
+      if(reset){working.rawEdited=false;working.panel=profile.mergePanel(prefs,{});}
+    } catch(e) {
+      if(sheet!==working)return;
+      working.error=e.message; if(!working.loaded)working.limits=null;
+    } finally {
+      if(sheet===working) {
+        working.busy=false; renderSettings();
+        if(working.error) feedback(working.error,"error");
+        else if(working.page==="rawcfg")feedback("已读取设备配置和面板偏好");
+      }
+    }
+  }
+  const renderField=(label,desc,input)=>'<label class="field"><span>'+esc(label)+(desc?'<small>'+esc(desc)+'</small>':"")+'</span>'+input+'</label>';
+  const renderGroup=(title,body)=>'<section class="settings-group"><h3>'+esc(title)+'</h3>'+body+'</section>';
+  const check=(id,checked,property)=>'<input class="switch" type="checkbox" '+id+' '+property+(checked?" checked":"")+'>';
+  const button=(id,text)=>'<button type="button" class="btn sm" id="'+id+'">'+esc(text)+'</button>';
+  function portableDraft() {
+    if(!sheet?.loaded)throw new Error("请先读取真实设备配置");
+    const draft=sheet.rawEdited?parseDraft($("rawCfgText").value):{deviceSession:sheet.limits,panel:sheet.panel};
+    return profile.portableProfile({...sheet.loaded.deviceSession,...draft.deviceSession},draft.panel);
+  }
+  function parseDraft(text) {
+    let obj;try{obj=JSON.parse(text);}catch{throw new Error("JSON 格式错误");}
+    return profile.parseProfile(obj,sheet.panel);
+  }
+  function stageDraft(ip) {
+    if(ip.hasDevice&&!sheet.loaded)throw new Error("请先读取目标设备的配置");
+    sheet.panel=ip.panel;
+    if(ip.hasDevice)sheet.limits={...sheet.limits,...ip.deviceSession};
+    sheet.rawEdited=false;
+  }
+  function setSettingsPage(page) {
+    if(!sheet||!titles[page]||sheet.busy)return;
+    if(sheet.rawEdited && sheet.page==="rawcfg" && page!=="rawcfg"){
+      try{stageDraft(parseDraft($("rawCfgText").value));}
+      catch(e){feedback(e.message,"error");return;}
+    }
+    sheet.page=page;renderSettings();
+  }
+  function renderSettings() {
+    if(!sheet)return;
+    const [title,subtitle]=titles[sheet.page];
+    $("settingsHeading").textContent=title;$("settingsSubtitle").textContent=subtitle;
+    for(const item of all("[data-setpage]",$("setNav"))) item.setAttribute("aria-current",item.dataset.setpage===sheet.page?"page":"false");
+    let html="";
+    if(sheet.page==="capture") {
+      html=renderGroup("摘要类别",kinds.map(({key,label})=>renderField(label,"只影响列表显示，不改变设备采集",
+        check('aria-label="显示'+label+'摘要"',sheet.panel.summaryCategories[key],'data-summary-kind="'+key+'"'))).join(""));
+    } else if(sheet.page==="log") {
+      const options=profile.displayChoices.map((v)=>'<option value="'+v+'"'+(v===sheet.panel.displayCap?" selected":"")+'>'+v+' 行</option>').join("");
+      html=renderGroup("电脑面板",renderField("每次展示条数","可以继续加载其余摘要",'<select id="setDisplayCap">'+options+'</select>')+
+        renderField("自动刷新","按会话状态更新列表",check('id="autoRefresh"',sheet.panel.autoRefresh,""))+
+        renderField("打开时展开筛选","只影响电脑面板",check('id="setFiltersOpen"',sheet.panel.advancedFilters,"")));
+      html+=renderGroup("设备会话限额",sheet.limits?fields.map(([key,label,unit,min,max,_step,id])=>
+        renderField(label,min+"–"+max+" "+unit,'<input type="number" inputmode="numeric" id="'+id+'" data-limit="'+key+'" min="'+min+'" max="'+max+'" step="1" value="'+esc(sheet.limits[key])+'">')).join(""):
+        '<div class="field">设备限额暂不可读。'+button("retrySettings","重新读取")+'</div>');
+    } else if(sheet.page==="rawcfg") {
+      let text="";
+      try{text=sheet.loaded?profile.portableProfile(sheet.limits,sheet.panel):"";}catch(e){text=json({version:1,deviceSession:sheet.limits,panel:sheet.panel});}
+      html='<p class="helper">版本 1：会话限额与电脑偏好。不包含地址、凭证、并发版本号或日志；也支持原来的 deviceSession 文件。</p>'+
+        '<div class="raw-actions">'+button("rawReload","重新载入")+button("rawCopy","复制")+button("rawDownload","下载")+
+        button("rawImport","从文件载入")+'<input id="rawFile" type="file" accept=".json,application/json" hidden></div>'+
+        '<textarea id="rawCfgText" aria-label="可移植配置 JSON" spellcheck="false">'+esc(text)+'</textarea>';
+    } else if(sheet.page==="data") {
+      const boardEnabled=state.session&&modeForTab()?"":" disabled";
+      const sessionEnabled=state.session?"":" disabled";
+      html=renderGroup("会话摘要",'<div class="field"><span>当前板块全部摘要</span><button class="btn sm" type="button" data-action="export-board"'+boardEnabled+'>下载 JSON</button></div>'+
+        '<div class="field"><span>当前筛选结果</span><button class="btn sm" type="button" data-action="export-filter"'+boardEnabled+'>导出 JSON</button></div>'+
+        '<div class="field"><span>完整会话</span><button class="btn sm" type="button" data-action="export-session"'+sessionEnabled+'>下载摘要</button></div>');
+    } else {
+      const texts={noise:"「隐藏更新」只根据 idhjd 已保存的更新标记调整当前列表。旧 App 按原始输入匹配的噪声规则不会在此应用。",
+        spoof:"这张面板只读会话摘要与保存会话限额，不接受伪装配置。",
+        bypass:"当前设备会话没有绕过检测入口，可移植配置也不会启用此类功能。"};
+      html='<p class="helper">'+esc(texts[sheet.page])+'</p>';
+    }
+    $("settingsContent").innerHTML=html;
+    if(sheet.page==="rawcfg"&&!sheet.loaded){
+      for(const key of ["rawCopy","rawDownload","rawImport","rawFile","rawCfgText"]) $(key).disabled=true;
+    }
+    if(sheet.busy) for(const el of all("button,input,textarea,select",$("settingsContent"))) el.disabled=true;
+    updateSave();
+  }
+  $("settingsBtn").addEventListener("click",()=>openSettings());
+  $("setNav").addEventListener("click",(e)=>{const target=e.target.closest("[data-setpage]");if(target)setSettingsPage(target.dataset.setpage);});
+  $("setMask").addEventListener("close",()=>{sheet=null;});
+  $("setMask").addEventListener("cancel",(e)=>{if(sheet?.busy)e.preventDefault();});
+  const closeSettings=()=>{if(sheet&&!sheet.busy)$("setMask").close();};
+  $("setClose").addEventListener("click",closeSettings);
+  $("cancelSettings").addEventListener("click",closeSettings);
+  $("settingsContent").addEventListener("input",(e)=>{
+    if(!sheet)return;
+    const el=e.target;
+    if(el.id==="rawCfgText"){sheet.rawEdited=true;updateSave();}
+    if(el.dataset.limit && sheet.limits) {sheet.limits[el.dataset.limit]=el.value===""?"":el.valueAsNumber;updateSave();}
+  });
+  $("settingsContent").addEventListener("change",async (e)=>{
+    if(!sheet||sheet.busy)return;
+    const el=e.target;
+    if(el.dataset.summaryKind) sheet.panel.summaryCategories[el.dataset.summaryKind]=el.checked;
+    if(el.id==="setDisplayCap")sheet.panel.displayCap=Number(el.value);
+    if(el.id==="autoRefresh")sheet.panel.autoRefresh=el.checked;
+    if(el.id==="setFiltersOpen")sheet.panel.advancedFilters=el.checked;
+    if(el.id==="rawFile") {
+      const file=el.files?.[0];el.value="";if(!file)return;
+      if(file.size>4096){feedback("导入失败：配置文件超过 4 KB","error");return;}
+      const current=sheet;
+      try{
+        const text=await file.text();
+        if(sheet!==current||sheet.page!=="rawcfg")return;
+        parseDraft(text); $("rawCfgText").value=text; sheet.rawEdited=true;updateSave(false);
+        feedback("已载入文件，保存后才会应用。","warn");
+      }catch(error){if(sheet===current)feedback("导入失败："+error.message,"error");}
+      return;
+    }
+    updateSave();
+  });
+  $("settingsContent").addEventListener("click",(e)=>{
+    if(!sheet||sheet.busy)return;
+    const id=e.target.closest("button")?.id;
+    try{
+      if(id==="rawReload"){loadSettings(true);return;}
+      if(id==="retrySettings"){loadSettings(false);return;}
+      if(id==="rawImport"){$("rawFile").click();return;}
+      if(id==="rawCopy")copy(portableDraft());
+      if(id==="rawDownload")download("dh-settings.json",portableDraft());
+    }catch(error){feedback(error.message,"error");}
+  });
+  $("rawSave").addEventListener("click",async ()=>{
+    const working=sheet;if(!working||working.busy)return;
+    try{
+      if(working.rawEdited)stageDraft(parseDraft($("rawCfgText").value));
+      if(working.limits)working.limits=profile.deviceLimits(working.limits,true);
+    }catch(error){feedback("保存失败："+error.message,"error");return;}
+    working.busy=true;updateSave();
+    try{
+      const deviceChanged=hasDeviceChange();
+      if(deviceChanged) {
+        const next=await deviceConfigRequest({revision:working.loaded.revision,deviceSession:working.limits});
+        if(sheet!==working)return;
+        working.loaded=next;working.limits={...next.deviceSession};
+      }
+      prefs=profile.mergePanel(profile.defaults(),working.panel);
+      const stored=saveLocal(preferenceKey,prefs);
+      state.limit=prefs.displayCap;render(true);
+      working.busy=false;renderSettings();
+      feedback(stored?(deviceChanged?"已保存并应用；设备限额从下一场会话生效。":"已保存并应用"):"已应用，但浏览器无法持久化偏好。",stored?"":"warn");
+    } catch(error) {
+      if(sheet!==working)return;
+      working.busy=false;updateSave(false);feedback("保存失败："+error.message,"error");
+    }
+  });
+
+  buildTabs();setWidth(view.width);setMenu("");render(true);pageReady=true;
+  refresh(true);
+  if(prefs.advancedFilters)setMenu("filterMenu");
+  setInterval(()=>{if(prefs.autoRefresh)refresh();},1500);
+})();
+
+</script>
+</body>
+</html>
