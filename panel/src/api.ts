@@ -36,7 +36,19 @@ export interface DhApp {
   bundleId: string; name?: string; execName?: string;
   kind?: string; running?: boolean;
 }
-export interface AppsReply { ok?: boolean; scope?: string[]; apps?: DhApp[]; error?: string }
+/** /api/apps 的 recorded[]：idhjd 侧已记录过事件的 App 清单，含当前是否有活进程。 */
+export interface DhRecordedApp {
+  bundleId: string;
+  /** idhjd 用 NSNumber(char) 发布尔，JSON 化成 1/0；apps[] 的 running 是真布尔。两种都要认。 */
+  running?: boolean | number;
+  pid?: number; count?: number; lastSeq?: number; updatedAtMs?: number;
+  byCategory?: number[]; processGeneration?: string; httpPort?: number;
+}
+export interface AppsReply {
+  ok?: boolean; scope?: string[]; apps?: DhApp[]; recorded?: DhRecordedApp[]; error?: string;
+}
+/** running 归一：recorded[] 里是 1/0，apps[] 里是 true/false。 */
+export const isRunning = (v: unknown): boolean => v === true || v === 1 || v === 'true' || v === '1';
 
 export interface FsEntry { name: string; type: string; size?: number; mtime?: number }
 export interface FsListReply { path?: string; parent?: string | null; entries?: FsEntry[]; limited?: boolean; error?: string }

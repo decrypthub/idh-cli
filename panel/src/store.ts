@@ -191,6 +191,11 @@ export async function refreshDevices() {
   }
 }
 
+// 自动选应用：capLoad/pollNewEvents 都要求 chosenPkg 非空，没人赋值时四个板块永远是空的。
+// recorded[] 是 idhjd 的「已记录 App」清单，取其中 running 的第一个作为默认选择。
+// 只移动自己挑的那一个：用户手动选择或深链接管后 autoPickedPkg 清空，自动逻辑不再插手。
+let autoPickedPkg = '';
+
 export async function chooseDevice(key: string) {
   if (store.selectedDeviceKey === key) return;
   store.selectedDeviceKey = key;
@@ -200,6 +205,7 @@ export async function chooseDevice(key: string) {
     pollGen++;
     lastLoadedPkg = '';
     store.chosenPkg = '';
+    autoPickedPkg = '';
     store.capItems = [];
     await refreshApps();
   } catch {
@@ -207,10 +213,19 @@ export async function chooseDevice(key: string) {
   }
 }
 
-export function choosePackage(pkg: string) {
+function firstRunningRecorded(list?: A.DhRecordedApp[]): string {
+  const hit = (list ?? []).find(a => a?.bundleId && A.isRunning(a.running));
+  return hit?.bundleId ?? '';
+}
+function applyPackage(pkg: string) {
   if (store.chosenPkg === pkg) return;
   store.chosenPkg = pkg;
   void syncCapScope();
+}
+/** 显式选择（弹窗点选、深链）：接管选择权，自动逻辑从此不再改动它。 */
+export function choosePackage(pkg: string) {
+  autoPickedPkg = '';
+  applyPackage(pkg);
 }
 
 // ---- 应用列表：失败保旧值 ----
@@ -234,6 +249,14 @@ export async function refreshApps() {
       const hit = store.apps.find(a => a.bundleId === want);
       if (hit || store.apps.length) deepAppDone = true;
       if (hit) choosePackage(hit.bundleId);
+    }
+    // 深链之后再自动选：显式 #app= 永远优先，只在没有任何选择（或当前选择仍是自动挑的）时兜底
+    if (!store.chosenPkg || store.chosenPkg === autoPickedPkg) {
+      const pick = firstRunningRecorded(r.recorded);
+      if (pick && pick !== store.chosenPkg) {
+        autoPickedPkg = pick;
+        applyPackage(pick);
+      }
     }
   } catch {
     store.appsFailed = true;
