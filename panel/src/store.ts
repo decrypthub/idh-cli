@@ -152,6 +152,16 @@ export async function syncCapScope() {
 }
 
 // ---- 设备轮询：失败保旧值。选择是服务器侧状态，选完同步本地。----
+// ?device= / ?app= 深链：首次对应列表加载后自动选中，只生效一次，不覆盖之后的手动切换
+let deepDeviceDone = false;
+let deepAppDone = false;
+// hash 传参（#app=…&device=…）：query 会被面板路由 404，fragment 不上行
+const deepParam = (k: string) => {
+  if (typeof location === 'undefined') return '';
+  const h = location.hash.replace(/^#/, '');
+  return new URLSearchParams(h.includes('=') ? h : '').get(k) || '';
+};
+
 export async function refreshDevices() {
   try {
     const r = await A.getDevices();
@@ -164,6 +174,15 @@ export async function refreshDevices() {
     store.devicesFailed = false;
     store.devicesUpdated = Date.now();
     store.wsState = 'live';
+    const want = deepParam('device');
+    if (want && !deepDeviceDone) {
+      const hit = store.devices.find(d => d.key === want || d.key.includes(want));
+      if (hit || list.length) deepDeviceDone = true;
+      if (hit && hit.key !== store.selectedDeviceKey) {
+        void chooseDevice(hit.key);
+        return;
+      }
+    }
     const sel = store.devices.find(d => d.selected) ?? store.devices[0];
     if (!store.selectedDeviceKey && sel) store.selectedDeviceKey = sel.key;
   } catch {
@@ -210,6 +229,12 @@ export async function refreshApps() {
     store.appsError = r.error ?? '';
     store.appsFailed = false;
     store.wsState = 'live';
+    const want = deepParam('app');
+    if (want && !deepAppDone) {
+      const hit = store.apps.find(a => a.bundleId === want);
+      if (hit || store.apps.length) deepAppDone = true;
+      if (hit) choosePackage(hit.bundleId);
+    }
   } catch {
     store.appsFailed = true;
     store.wsState = 'fail';
@@ -222,6 +247,8 @@ watch(() => store.view, v => { if (v === 'settings') void refreshScope(); });
 // ---- 轮询（后台隐藏标签页暂停）----
 export function connectWs() { /* 无 WebSocket，保留入口名避免壳层改动 */ }
 export function startPolling() {
+  const v = deepParam('view');
+  if (['cc', 'sy', 'nt', 'kc', 'files', 'dump', 'settings'].includes(v)) store.view = v as typeof store.view;
   void refreshDevices();
   void refreshApps();
   void refreshScope();

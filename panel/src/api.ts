@@ -106,7 +106,8 @@ export interface EventsQuery {
 export function getEvents(bundle: string, q: EventsQuery = {}) {
   const p = new URLSearchParams();
   if (q.categories) p.set('categories', q.categories);
-  if (q.limit != null) p.set('limit', String(q.limit));
+  // idhjd 单页硬上限 200，超限直接 4xx/502；更大的分页靠 before 游标
+  if (q.limit != null) p.set('limit', String(Math.min(q.limit, 200)));
   if (q.after != null) p.set('after', String(q.after));
   if (q.before != null) p.set('before', String(q.before));
   return api<EventsReply>(`/api/apps/${encodeURIComponent(bundle)}/events?${p.toString()}`);
