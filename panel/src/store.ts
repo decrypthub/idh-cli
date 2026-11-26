@@ -3,7 +3,7 @@ import { reactive, computed } from 'vue';
 import * as A from './api';
 import {
   type AppRecord, type DeviceInfo, type DeviceRow, type DeviceSession, type EventItem,
-  type InstalledApp, type PanelPrefs, defaults, mergePanel,
+  type InstalledApp, type PanelPrefs, BOARD_CATS, defaults, mergePanel,
 } from './model';
 
 export interface Catalog { device: DeviceInfo; sessions: DeviceSession[]; installed: InstalledApp[] }
@@ -174,31 +174,43 @@ export function changeSelection(id: string) {
 }
 
 // ---- 按 App 读时间线：默认只取设备最新一页；向前翻页由「加载更早」手动触发 ----
+// 窗口按当前板块类别过滤拉取（设备端 SQL 过滤）：噪声类别不会把本板块事件挤出窗口。
 const EVENT_PAGE = 200;
 interface EventWindow {
   bundle: string;
+  cats: number[];        // 窗口绑定的类别过滤
   events: EventItem[];   // appSeq 升序
   oldestSeq: number;
   hasOlder: boolean;
-  total: number;         // 设备侧该应用保存总数（summary.count）
+  total: number;         // 设备侧该应用保存总数（summary.count，全类别）
+  boardTotal: number;    // 本板块类别在设备侧的总数（byCategory 求和）
 }
 let eventWindow: EventWindow | null = null;
 let windowGen = 0;
+
+// 当前事件板块的类别；非事件板块（注入/文件/符号/Dump/设置）返回 null
+export function boardCats(tab = store.tab): number[] | null {
+  return BOARD_CATS[tab] ?? null;
+}
+const sameCats = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i]);
+const boardTotalOf = (byCat: number[] | undefined, cats: number[], fallback: number) =>
+  Array.isArray(byCat) && byCat.length ? cats.reduce((sum, c) => sum + (byCat[c] ?? 0), 0) : fallback;
 
 const normEvent = (e: EventItem): EventItem => {
   const seq = e.appSeq ?? e.seq;
   return { ...e, seq, appSeq: seq };
 };
 
-async function loadLatestPage(bundle: string): Promise<void> {
-  const page = await A.getAppEvents(bundle, { limit: EVENT_PAGE });
+async function loadLatestPage(bundle: string, cats: number[]): Promise<void> {
+  const page = await A.getAppEvents(bundle, { limit: EVENT_PAGE, categories: cats });
   if ((page as { __status?: number }).__status) throw new Error('设备摘要暂时无法读取');
   const events = (page.events ?? []).map(normEvent);
   eventWindow = {
-    bundle, events,
+    bundle, cats: cats.slice(), events,
     oldestSeq: events[0]?.appSeq ?? 0,
     hasOlder: !!page.hasOlder,
     total: Number(page.summary?.count ?? events.length),
+    boardTotal: boardTotalOf(page.summary?.byCategory, cats, events.length),
   };
   if (Array.isArray(page.summary?.byCategory)) store.catTotals = page.summary.byCategory;
 }
@@ -208,18 +220,19 @@ export async function loadOlder(): Promise<void> {
   if (!w?.hasOlder || store.loadingOlder) return;
   store.loadingOlder = true;
   try {
-    const page = await A.getAppEvents(w.bundle, { before: w.oldestSeq, limit: EVENT_PAGE });
+    const page = await A.getAppEvents(w.bundle, { before: w.oldestSeq, limit: EVENT_PAGE, categories: w.cats });
     if ((page as { __status?: number }).__status) throw new Error('设备摘要暂时无法读取');
-    // 轮询快照不挡手动翻页；只在窗口整体被换（切应用/外部清理重建）时丢弃结果
+    // 轮询快照不挡手动翻页；只在窗口整体被换（切应用/切板块/外部清理重建）时丢弃结果
     if (eventWindow !== w) return;
     const older = (page.events ?? []).map(normEvent).filter((e) => (e.appSeq ?? 0) < w.oldestSeq);
     if (older.length) w.events.unshift(...older);
     w.oldestSeq = Number(page.oldestSeq) || w.oldestSeq;
     w.hasOlder = !!page.hasOlder;
     w.total = Number(page.summary?.count ?? w.total);
+    w.boardTotal = boardTotalOf(page.summary?.byCategory, w.cats, w.boardTotal);
     store.events = w.events.slice();
     store.hasOlder = w.hasOlder;
-    store.eventTotal = w.total;
+    store.eventTotal = w.boardTotal;
     if (Array.isArray(page.summary?.byCategory)) store.catTotals = page.summary.byCategory;
   } finally { store.loadingOlder = false; }
 }
@@ -248,11 +261,14 @@ export async function snapshot(): Promise<{ device: DeviceInfo; session: typeof 
   const latest = appSessions[0];
   const live = device.apps.find((a) => a.bundleId === store.selected);
   const gen = ++windowGen;
-  if (!eventWindow || eventWindow.bundle !== store.selected) {
-    await loadLatestPage(store.selected);
+  // 切到另一事件板块后窗口类别不再匹配 → 整窗按新板块类别重读；非事件板块保持现有窗口继续增量
+  const wanted = boardCats();
+  if (!eventWindow || eventWindow.bundle !== store.selected ||
+      (wanted !== null && eventWindow.cats.length > 0 && !sameCats(eventWindow.cats, wanted))) {
+    await loadLatestPage(store.selected, wanted ?? eventWindow?.cats ?? []);
   } else {
     const tail = eventWindow.events[eventWindow.events.length - 1]?.appSeq ?? 0;
-    const page = await A.getAppEvents(store.selected, { after: tail, limit: 500 });
+    const page = await A.getAppEvents(store.selected, { after: tail, limit: 500, categories: eventWindow.cats });
     if ((page as { __status?: number }).__status) throw new Error('设备摘要暂时无法读取');
     if (gen !== windowGen || !eventWindow) throw new Error('stale');
     const fresh = (page.events ?? []).map(normEvent).filter((e) => (e.appSeq ?? 0) > tail);
@@ -260,15 +276,18 @@ export async function snapshot(): Promise<{ device: DeviceInfo; session: typeof 
     const total = Number(page.summary?.count ?? NaN);
     if (Number.isFinite(total)) {
       // 设备记录在外部被清理（MCP/其他客户端）→ 已加载数据可能越界，整窗重读最新页
-      if (total < eventWindow.events.length) await loadLatestPage(store.selected);
-      else eventWindow.total = total;
+      if (total < eventWindow.events.length) await loadLatestPage(store.selected, eventWindow.cats);
+      else {
+        eventWindow.total = total;
+        eventWindow.boardTotal = boardTotalOf(page.summary?.byCategory, eventWindow.cats, eventWindow.boardTotal);
+      }
     }
     if (Array.isArray(page.summary?.byCategory)) store.catTotals = page.summary.byCategory;
   }
   if (gen !== windowGen || !eventWindow) throw new Error('stale');
   const w = eventWindow;
   store.hasOlder = w.hasOlder;
-  store.eventTotal = w.total;
+  store.eventTotal = w.boardTotal;
   return {
     device,
     session: {

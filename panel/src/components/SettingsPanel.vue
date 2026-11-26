@@ -3,7 +3,7 @@ import { appearance, setAppearance, type Appearance } from '../appearance';
 import { computed, reactive, ref, onMounted, watch } from 'vue';
 import { store, savePrefs, copyText, downloadText } from '../store';
 import {
-  SUMMARY_KINDS, DISPLAY_CHOICES, LIMIT_FIELDS, LIMITS, CATEGORIES,
+  SUMMARY_KINDS, DISPLAY_CHOICES, LIMIT_FIELDS, LIMITS, CATEGORIES, BOARD_CATS,
   type PanelPrefs, type DeviceLimits, type EventItem,
   defaults, mergePanel, deviceLimits, parseProfile, portableProfile, cleanEvent,
   getCategory, getPhase, fmt, longTime,
@@ -120,7 +120,6 @@ async function save() {
 }
 
 // data 页导出
-const BOARD_CATS: Record<string, number[]> = { crypto: [0, 1, 2, 3], sys: [4, 5], net: [6], keychain: [7], other: [8] };
 const cats = BOARD_CATS[store.tab] ? BOARD_CATS[store.tab] : [0, 1, 2, 3];
 function exportData(scope: 'board' | 'filtered' | 'session') {
   const events = (scope === 'board'

@@ -4,6 +4,7 @@ useAppearance();
 import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { store, toasts, refresh, loadDevices, saveLocal } from './store';
 import { I } from './icons';
+import { BOARD_CATS } from './model';
 import DeviceMenu from './components/DeviceMenu.vue';
 import AppDialog from './components/AppDialog.vue';
 import EventBoard from './components/EventBoard.vue';
@@ -18,11 +19,11 @@ import WechatDialog from './components/WechatDialog.vue';
 
 type ViewKey = 'crypto' | 'sys' | 'net' | 'keychain' | 'other' | 'inject' | 'files' | 'symbols' | 'dump' | 'settings';
 const NAV: Array<{ key: ViewKey; label: string; icon: string; cats?: number[] }> = [
-  { key: 'crypto', label: '加解密', icon: I.lock, cats: [0, 1, 2, 3] },
-  { key: 'sys', label: '系统', icon: I.cpu, cats: [4, 5] },
-  { key: 'net', label: '网络', icon: I.wifi, cats: [6] },
-  { key: 'keychain', label: 'Keychain', icon: I.key, cats: [7] },
-  { key: 'other', label: '其他', icon: I.list, cats: [8] },
+  { key: 'crypto', label: '加解密', icon: I.lock, cats: BOARD_CATS.crypto },
+  { key: 'sys', label: '系统', icon: I.cpu, cats: BOARD_CATS.sys },
+  { key: 'net', label: '网络', icon: I.wifi, cats: BOARD_CATS.net },
+  { key: 'keychain', label: 'Keychain', icon: I.key, cats: BOARD_CATS.keychain },
+  { key: 'other', label: '其他', icon: I.list, cats: BOARD_CATS.other },
 ];
 const TOOLS: Array<{ key: ViewKey; label: string; icon: string }> = [
   { key: 'inject', label: '注入范围', icon: I.inject },

@@ -3,15 +3,12 @@ import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue';
 import { store, displayState, refresh, saveLocal, toast, downloadText, loadOlder, clearDeviceEvents } from '../store';
 import { I } from '../icons';
 import {
-  CATEGORIES, PHASES, getCategory, getPhase, titleFor, sizeLabel, shortTime, longTime, fmt,
+  CATEGORIES, PHASES, BOARD_CATS, getCategory, getPhase, titleFor, sizeLabel, shortTime, longTime, fmt,
   cleanEvent, type EventItem,
 } from '../model';
 import EventDetail from './EventDetail.vue';
 
-// 板块 → 类别（与旧面板 modules 表一致；App.vue 侧栏已定义，这里只取本板块类别）
-const BOARD_CATS: Record<string, number[]> = {
-  crypto: [0, 1, 2, 3], sys: [4, 5], net: [6], keychain: [7], other: [8],
-};
+// 板块 → 类别（共享定义在 model.ts；设备拉取按同一类别过滤，见 store.ts）
 const cats = computed(() => BOARD_CATS[store.tab] ?? []);
 
 const q = ref('');
@@ -163,7 +160,11 @@ function onKey(e: KeyboardEvent) {
   select(row.seq);
   nextTick(() => document.querySelector(`.event-row[data-seq="${row.seq}"]`)?.scrollIntoView({ block: 'nearest' }));
 }
-onMounted(() => { document.addEventListener('click', onDocClick); document.addEventListener('keydown', onKey); });
+onMounted(() => {
+  document.addEventListener('click', onDocClick);
+  document.addEventListener('keydown', onKey);
+  void refresh(true);
+});
 onUnmounted(() => { document.removeEventListener('click', onDocClick); document.removeEventListener('keydown', onKey); });
 </script>
 

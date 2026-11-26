@@ -3,6 +3,11 @@ export const CATEGORIES = ["digest", "hmac", "sym", "asym", "file", "sys", "net"
 export const CATEGORY_LABELS = ["摘要", "HMAC", "对称", "非对称", "文件", "系统", "网络", "Keychain", "其他"];
 export const SUMMARY_KINDS = CATEGORIES.map((key, i) => ({ key, label: CATEGORY_LABELS[i] }));
 
+// 事件板块 → 类别索引（与设备端类别表一致）。面板按板块过滤拉取，非事件板块不在此表。
+export const BOARD_CATS: Record<string, number[]> = {
+  crypto: [0, 1, 2, 3], sys: [4, 5], net: [6], keychain: [7], other: [8],
+};
+
 export const PHASES: Record<string, string> = { entry: "进入", leave: "返回", complete: "完成", aborted: "中止" };
 export const KIND_LABELS: Record<string, string> = { crypto: "加解密", network: "网络", observation: "观测", function: "函数" };
 export const SESSION_STATUS: Record<string, string> = { waiting: "等待 Agent", observing: "观察中", closing: "确认尾部", ended: "已结束" };

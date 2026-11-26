@@ -18,10 +18,11 @@ export interface EventPage {
   oldestSeq?: number; latestSeq?: number;
   summary?: { count?: number; lastSeq?: number; byCategory?: number[] };
 }
-export const getAppEvents = (bundleId: string, opts: { after?: number; before?: number; limit?: number } = {}) => {
+export const getAppEvents = (bundleId: string, opts: { after?: number; before?: number; limit?: number; categories?: number[] } = {}) => {
   const q = new URLSearchParams({ limit: String(opts.limit ?? 150) });
   if (opts.after != null) q.set('after', String(opts.after));
   if (opts.before != null) q.set('before', String(opts.before));
+  if (opts.categories?.length) q.set('categories', opts.categories.join(','));
   return api<EventPage>(`/api/apps/${encodeURIComponent(bundleId)}/events?${q}`);
 };
 export const clearAppEvents = (bundleId: string) =>
