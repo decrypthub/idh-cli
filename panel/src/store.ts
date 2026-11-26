@@ -1,73 +1,78 @@
-// 响应式数据层：panel-device.js 的 inspectDevice/readEvents/snapshot + 面板状态。
-import { reactive, computed } from 'vue';
+// 全局响应式状态。保留 ADH 面板三原则，数据模型为 IDH 原生：
+//  1. 记录只在「设备+包身份」真变时清空——轮询失败、应用启停不触发。
+//  2. 读失败 ≠ 设备没了——catch 保旧数据标 failed，等下次成功轮判定生死。
+//  3. 增量轮询按 seq 游标合入，服务端按 App 分片，不存在跨 App 归属问题。
+import { reactive, computed, watch } from 'vue';
 import * as A from './api';
-import {
-  type AppRecord, type DeviceInfo, type DeviceRow, type DeviceSession, type EventItem,
-  type InstalledApp, type PanelPrefs, defaults, mergePanel,
-} from './model';
+import { recordVisible } from './observations';
 
-export interface Catalog { device: DeviceInfo; sessions: DeviceSession[]; installed: InstalledApp[] }
-interface BoardDisplay { pauseAt: number | null; clearThrough: number | null }
-
-const PREF_KEY = 'idh_panel_preferences_v1';
-const VIEW_KEY = 'idh_workspace_view_v1';
-
-function loadLocal<T>(key: string): T | null {
-  try { return JSON.parse(localStorage.getItem(key) ?? '') as T; } catch { return null; }
-}
-export function saveLocal(key: string, value: unknown): boolean {
-  try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
+export interface DeviceView {
+  key: string; id: string; address: string; label: string;
+  online: boolean | null; selected: boolean; failed?: boolean;
 }
 
-function loadPrefs(): PanelPrefs {
-  try {
-    const old = Number(localStorage.getItem('dh_displayCap'));
-    const prev: Record<string, unknown> = { advancedFilters: localStorage.getItem('dh_filters_open') === '1' };
-    if ([100, 150, 300, 500].includes(old)) prev.displayCap = old;
-    return mergePanel(defaults(), (loadLocal<Record<string, unknown>>(PREF_KEY) ?? prev) as Record<string, unknown>);
-  } catch { return defaults(); }
+export const CAP_BUFFER_LIMIT = 4500;
+const BUCKET_LIMIT = 1500;
+
+// 板块分桶：crypto 0-3 / system 4,5 / net 6 / keychain 7。各类独立限额，防止高频噪音挤空加密记录。
+function bucketOf(cat: number): 'crypto' | 'net' | 'system' | 'keychain' {
+  if (cat <= 3) return 'crypto';
+  if (cat === 6) return 'net';
+  if (cat === 7) return 'keychain';
+  return 'system';
 }
 
 export const store = reactive({
-  // 设备与连接
-  network: 'loading' as 'loading' | 'online' | 'offline',
-  device: null as DeviceInfo | null,
-  devices: [] as DeviceRow[],
-  usbRows: [] as string[],
-  // 应用目录
-  apps: [] as AppRecord[],
-  installed: [] as InstalledApp[],
-  selected: '',
-  // 当前应用数据
-  session: null as (DeviceSession & { sessions?: number }) | null,
-  events: [] as EventItem[],
-  sessionNotice: '',
-  // 已加载窗口之外设备上还有更早记录
-  hasOlder: false,
-  eventTotal: 0,
-  loadingOlder: false,
-  // 设备侧按类别真实总数（summary.byCategory），空数组表示未取得
-  catTotals: [] as number[],
-  // 板块与展示
-  tab: 'crypto',
-  displayByBoard: new Map<string, BoardDisplay>(),
-  prefs: loadPrefs(),
-  limit: 0, // 由 prefs.displayCap 初始化
-  seq: null as number | null,
-  detailTab: 'data' as 'data' | 'context' | 'raw',
-  // 注入范围
-  injectData: null as { apps?: InstalledApp[]; scope?: string[]; error?: string } | null,
-  injectAt: 0,
-  injectPending: new Set<string>(),
-  // 对话框开关
+  // 连接（轮询健康度，无 WebSocket）
+  wsState: 'off' as 'off' | 'live' | 'fail',
+  capLoading: false,
+  // 设备
+  devices: [] as DeviceView[],
+  devicesFailed: false,
+  devicesUpdated: 0,
+  // 应用
+  apps: [] as A.DhApp[],
+  appsError: '',
+  appsFailed: false,
+  scope: new Set<string>(),
+  // 选择（设备+包身份；应用启停不动它）
+  chosenPkg: '',
+  selectedDeviceKey: '',
+  // 记录
+  capItems: [] as A.DhEvent[],
+  capDropped: 0,
+  capLatest: 0,
+  capHasOlder: { crypto: false, system: false, net: false, keychain: false },
+  // 视图
+  view: 'cc' as 'cc' | 'sy' | 'nt' | 'kc' | 'files' | 'dump' | 'settings',
   appDialogOpen: false,
-  diagOpen: false,
-  mcpOpen: false,
-  settingsOpen: false,
-  wechatOpen: false,
-  settingsPage: 'capture',
 });
-store.limit = store.prefs.displayCap;
+
+export function belongsToApp(_c: A.DhEvent): boolean {
+  // 事件 API 按 App 分片，capItems 里只有当前包的记录。
+  return !!store.chosenPkg;
+}
+
+// ---- 记录（按板块独立限额淘汰）----
+export function capPush(c: A.DhEvent) {
+  store.capItems.push(c);
+  const b = bucketOf(c.category);
+  let cnt = 0;
+  for (let i = store.capItems.length - 1; i >= 0; i--) {
+    if (bucketOf(store.capItems[i].category) !== b) continue;
+    cnt++;
+    if (cnt > BUCKET_LIMIT) {
+      store.capItems.splice(i, 1);
+      store.capHasOlder[b] = true;
+    }
+  }
+}
+/** 清空显示：只从内存列表移除匹配记录，不动设备上的数据。 */
+export function capRemoveWhere(fn: (c: A.DhEvent) => boolean): number {
+  const before = store.capItems.length;
+  for (let i = store.capItems.length - 1; i >= 0; i--) if (fn(store.capItems[i])) store.capItems.splice(i, 1);
+  return before - store.capItems.length;
+}
 
 // ---- toast ----
 export const toasts = reactive<{ id: number; text: string }[]>([]);
@@ -75,297 +80,229 @@ let toastSeq = 0;
 export function toast(text: string) {
   const id = ++toastSeq;
   toasts.push({ id, text });
-  setTimeout(() => { const i = toasts.findIndex(t => t.id === id); if (i >= 0) toasts.splice(i, 1); }, 1500);
-}
-export async function copyText(text: string) {
-  if (!text) return;
-  try { await navigator.clipboard.writeText(text); }
-  catch {
-    const ta = document.createElement('textarea');
-    (document.querySelector('dialog[open]') ?? document.body).appendChild(ta);
-    ta.value = text; ta.select();
-    try { document.execCommand('copy'); } catch { toast('无法复制，请手动选中内容'); ta.remove(); return; }
-    ta.remove();
-  }
-  toast('已复制');
-}
-export function downloadText(filename: string, text: string) {
-  downloadBlob(filename, new Blob([text], { type: 'application/json' }));
-}
-export function downloadBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  toast('已下载 ' + filename);
+  setTimeout(() => { const i = toasts.findIndex(t => t.id === id); if (i >= 0) toasts.splice(i, 1); }, 2600);
 }
 
-// ---- 板块显示状态（暂停/清空，跨页签保留）----
-export function displayState(board = store.tab): BoardDisplay {
-  if (!store.displayByBoard.has(board)) store.displayByBoard.set(board, { pauseAt: null, clearThrough: null });
-  return store.displayByBoard.get(board)!;
-}
-
-// ---- 应用归并：会话按 bundleId 合并 + 已安装元数据 ----
-export function appsFrom(sessions: DeviceSession[], installed: InstalledApp[]): AppRecord[] {
-  const meta = new Map(installed.map((a) => [a.bundleId, a]));
-  const map = new Map<string, AppRecord>();
-  for (const s of sessions) {
-    let app = map.get(s.bundleId);
-    if (!app) {
-      const m = meta.get(s.bundleId);
-      app = {
-        sessionId: s.bundleId, bundleId: s.bundleId, createdAtMs: s.createdAtMs,
-        status: s.status, count: 0, sessions: 0, lastSeq: 0,
-        name: m?.name ?? '', running: m?.running === true, kind: 'record',
-      };
-      map.set(s.bundleId, app);
-    }
-    app.count += s.count;
-    app.sessions += 1;
-    if (s.createdAtMs > app.createdAtMs) { app.createdAtMs = s.createdAtMs; app.status = s.status; }
-  }
-  return [...map.values()];
-}
-
-let catalog: Catalog | null = null;
-let catalogPending: Promise<Catalog> | null = null;
-
-export async function inspectDevice(): Promise<Catalog> {
-  if (catalogPending) return catalogPending;
-  if (catalog && Date.now() - (catalog as { time?: number }).time! < 1100) return catalog;
-  catalogPending = (async () => {
-    const [health, history, installedRes] = await Promise.all([
-      A.getHealth(), A.getSessions(), A.getApps()]);
-    if (!(health as unknown as { ok?: boolean }).ok && !(health as DeviceInfo).service)
-      throw new Error('设备连接不可用');
-    const device = health;
-    const sessions = history.sessions ?? [];
-    const installed = installedRes.apps ?? [];
-    const known = store.selected
-      && (sessions.some((s) => s.bundleId === store.selected)
-        || installed.some((a) => a.bundleId === store.selected));
-    if (!known) changeSelection(sessions[0]?.bundleId ?? installed[0]?.bundleId ?? '');
-    store.apps = appsFrom(sessions, installed);
-    store.installed = installed;
-    store.sessionNotice = history.sessions ? '' : '设备在线，会话暂时无法读取。';
-    catalog = { device, sessions, installed };
-    (catalog as { time?: number }).time = Date.now();
-    return catalog;
-  })();
-  try { return await catalogPending; } finally { catalogPending = null; }
-}
-
-export function changeSelection(id: string) {
-  if (id === store.selected) return;
-  const had = !!store.selected;
-  store.selected = id;
-  eventWindow = null;
-  store.hasOlder = false;
-  store.eventTotal = 0;
-  store.loadingOlder = false;
-  store.catTotals = [];
-  store.displayByBoard.clear();
-  store.seq = null;
-  store.detailTab = 'data';
-  store.limit = store.prefs.displayCap;
-  if (had) void refresh(true);
-}
-
-// ---- 按 App 读时间线：默认只取设备最新一页；向前翻页由「加载更早」手动触发 ----
-const EVENT_PAGE = 200;
-interface EventWindow {
-  bundle: string;
-  events: EventItem[];   // appSeq 升序
-  oldestSeq: number;
-  hasOlder: boolean;
-  total: number;         // 设备侧该应用保存总数（summary.count）
-}
-let eventWindow: EventWindow | null = null;
-let windowGen = 0;
-
-const normEvent = (e: EventItem): EventItem => {
-  const seq = e.appSeq ?? e.seq;
-  return { ...e, seq, appSeq: seq };
-};
-
-async function loadLatestPage(bundle: string): Promise<void> {
-  const page = await A.getAppEvents(bundle, { limit: EVENT_PAGE });
-  if ((page as { __status?: number }).__status) throw new Error('设备摘要暂时无法读取');
-  const events = (page.events ?? []).map(normEvent);
-  eventWindow = {
-    bundle, events,
-    oldestSeq: events[0]?.appSeq ?? 0,
-    hasOlder: !!page.hasOlder,
-    total: Number(page.summary?.count ?? events.length),
-  };
-  if (Array.isArray(page.summary?.byCategory)) store.catTotals = page.summary.byCategory;
-}
-
-export async function loadOlder(): Promise<void> {
-  const w = eventWindow;
-  if (!w?.hasOlder || store.loadingOlder) return;
-  store.loadingOlder = true;
+// ---- 初次加载：四个板块并行拉取 ----
+export async function capLoad() {
+  const pkg = store.chosenPkg;
+  if (!pkg) { store.capItems = []; return; }
+  store.capLoading = true;
   try {
-    const page = await A.getAppEvents(w.bundle, { before: w.oldestSeq, limit: EVENT_PAGE });
-    if ((page as { __status?: number }).__status) throw new Error('设备摘要暂时无法读取');
-    // 轮询快照不挡手动翻页；只在窗口整体被换（切应用/外部清理重建）时丢弃结果
-    if (eventWindow !== w) return;
-    const older = (page.events ?? []).map(normEvent).filter((e) => (e.appSeq ?? 0) < w.oldestSeq);
-    if (older.length) w.events.unshift(...older);
-    w.oldestSeq = Number(page.oldestSeq) || w.oldestSeq;
-    w.hasOlder = !!page.hasOlder;
-    w.total = Number(page.summary?.count ?? w.total);
-    store.events = w.events.slice();
-    store.hasOlder = w.hasOlder;
-    store.eventTotal = w.total;
-    if (Array.isArray(page.summary?.byCategory)) store.catTotals = page.summary.byCategory;
-  } finally { store.loadingOlder = false; }
-}
-
-export async function clearDeviceEvents(): Promise<boolean> {
-  if (!store.selected) return false;
-  const res = await A.clearAppEvents(store.selected);
-  if (res.error || (res as { __status?: number }).__status) return false;
-  eventWindow = null;
-  store.events = [];
-  store.seq = null;
-  store.detailTab = 'data';
-  await refresh(true);
-  return true;
-}
-
-export async function snapshot(): Promise<{ device: DeviceInfo; session: typeof store.session; events: EventItem[] }> {
-  const { device, sessions } = await inspectDevice();
-  const appSessions = sessions.filter((s) => s.bundleId === store.selected);
-  if (!appSessions.length) {
-    eventWindow = null;
-    store.hasOlder = false;
-    store.eventTotal = 0;
-    return { device, session: null, events: [] };
-  }
-  const latest = appSessions[0];
-  const live = device.apps.find((a) => a.bundleId === store.selected);
-  const gen = ++windowGen;
-  if (!eventWindow || eventWindow.bundle !== store.selected) {
-    await loadLatestPage(store.selected);
-  } else {
-    const tail = eventWindow.events[eventWindow.events.length - 1]?.appSeq ?? 0;
-    const page = await A.getAppEvents(store.selected, { after: tail, limit: 500 });
-    if ((page as { __status?: number }).__status) throw new Error('设备摘要暂时无法读取');
-    if (gen !== windowGen || !eventWindow) throw new Error('stale');
-    const fresh = (page.events ?? []).map(normEvent).filter((e) => (e.appSeq ?? 0) > tail);
-    if (fresh.length) eventWindow.events.push(...fresh);
-    const total = Number(page.summary?.count ?? NaN);
-    if (Number.isFinite(total)) {
-      // 设备记录在外部被清理（MCP/其他客户端）→ 已加载数据可能越界，整窗重读最新页
-      if (total < eventWindow.events.length) await loadLatestPage(store.selected);
-      else eventWindow.total = total;
+    const [rc, rs, rn, rk] = await Promise.all([
+      A.getEvents(pkg, { categories: A.CRYPTO_CATS, limit: 600 }),
+      A.getEvents(pkg, { categories: A.SYSTEM_CATS, limit: 600 }),
+      A.getEvents(pkg, { categories: '6', limit: 400 }),
+      A.getEvents(pkg, { categories: '7', limit: 200 }),
+    ]);
+    if (store.chosenPkg !== pkg) return;
+    const bySeq = new Map<number, A.DhEvent>();
+    for (const r of [rc, rs, rn, rk]) {
+      for (const c of r.events ?? []) bySeq.set(c.seq, c);
     }
-    if (Array.isArray(page.summary?.byCategory)) store.catTotals = page.summary.byCategory;
-  }
-  if (gen !== windowGen || !eventWindow) throw new Error('stale');
-  const w = eventWindow;
-  store.hasOlder = w.hasOlder;
-  store.eventTotal = w.total;
-  return {
-    device,
-    session: {
-      ...latest, count: w.total, lastSeq: w.events[w.events.length - 1]?.appSeq ?? latest.lastSeq,
-      sessions: appSessions.length,
-      processGeneration: live?.processGeneration ?? latest.processGeneration,
-    },
-    events: w.events.slice(),
-  };
-}
-
-// ---- 轮询 ----
-let inFlight = false;
-export async function refresh(force = false) {
-  if (inFlight && !force) return;
-  inFlight = true;
-  try {
-    const next = await snapshot();
-    const changed = store.session?.sessionId !== next.session?.sessionId;
-    if (changed) {
-      store.displayByBoard.clear();
-      store.seq = null;
-      store.detailTab = 'data';
-      store.limit = store.prefs.displayCap;
-    }
-    store.device = next.device;
-    store.session = next.session;
-    store.events = next.events;
-    store.network = 'online';
+    // 合并加载期间轮询到的新记录，避免往返期间丢尾部
+    for (const c of store.capItems) bySeq.set(c.seq, c);
+    const merged = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+    store.capItems = merged;
+    store.capHasOlder.crypto = !!rc.hasOlder;
+    store.capHasOlder.system = !!rs.hasOlder;
+    store.capHasOlder.net = !!rn.hasOlder;
+    store.capHasOlder.keychain = !!rk.hasOlder;
+    store.capDropped = 0;
+    store.capLatest = merged.at(-1)?.seq ?? 0;
+    store.wsState = 'live';
   } catch {
-    store.network = 'offline';
+    // 网络瞬断保旧数据，绝不把已有列表洗成空数组
   } finally {
-    inFlight = false;
+    if (store.chosenPkg === pkg) store.capLoading = false;
   }
 }
 
-export function chooseApp(bundleId: string): boolean {
-  const known = catalog?.sessions.some((s) => s.bundleId === bundleId)
-    || catalog?.installed?.some((a) => a.bundleId === bundleId)
-    || store.apps.some((a) => a.bundleId === bundleId)
-    || store.installed.some((a) => a.bundleId === bundleId);
-  if (!known) return false;
-  changeSelection(bundleId);
-  return true;
-}
-
-// ---- 设备列表 ----
-export async function loadDevices() {
+// ---- 增量轮询：after 游标拉新，按 seq 去重合入 ----
+let pollGen = 0;
+export async function pollNewEvents() {
+  const pkg = store.chosenPkg;
+  if (!pkg) return;
+  const gen = pollGen;
   try {
-    const data = await A.getDevices();
-    store.devices = data.devices ?? [];
-    store.usbRows = data.usb ?? [];
-  } catch { store.devices = []; store.usbRows = []; }
-}
-export async function deviceSelect(id: string): Promise<boolean> {
-  const data = await A.deviceAction({ action: 'select', id });
-  return !data.error;
-}
-export async function deviceRemove(id: string) { await A.deviceAction({ action: 'remove', id }); await loadDevices(); }
-export async function deviceAdd(address?: string, usb?: string) {
-  const body: Record<string, unknown> = { action: 'add' };
-  if (address) body.address = address;
-  if (usb) body.usb = usb;
-  const data = await A.deviceAction(body);
-  await loadDevices();
-  return !data.error;
-}
-export const currentDevice = computed(() => store.devices.find((d) => d.selected));
-
-// ---- 注入范围 ----
-export async function loadInject(force = false) {
-  if (!force && Date.now() - store.injectAt < 3000) return;
-  store.injectAt = Date.now();
-  try { store.injectData = await A.getApps(); }
-  catch { store.injectData = { error: 'device_unavailable' }; }
-}
-export async function toggleScope(bundleId: string, on: boolean): Promise<boolean> {
-  let data: { scope?: string[]; error?: string };
-  try { data = await A.scopeUpdate(bundleId, on); }
-  catch { toast('注入范围更新失败'); return false; }
-  if (data.error) { toast('注入范围更新失败'); return false; }
-  const app = (store.injectData?.apps ?? []).find((a) => a.bundleId === bundleId);
-  if (app?.running) store.injectPending.add(bundleId); else store.injectPending.delete(bundleId);
-  if (store.injectData) store.injectData.scope = data.scope ?? store.injectData.scope;
-  return true;
-}
-export async function relaunchBundle(bundleId: string) {
-  await A.relaunchApp(bundleId).catch(() => undefined);
-  store.injectPending.delete(bundleId);
-  setTimeout(() => void loadInject(true), 1500);
+    const r = await A.getEvents(pkg, { after: store.capLatest, limit: 500 });
+    if (store.chosenPkg !== pkg || gen !== pollGen) return;
+    const fresh = (r.events ?? []).filter(e => e.seq > store.capLatest);
+    if (fresh.length) {
+      fresh.sort((a, b) => a.seq - b.seq);
+      for (const c of fresh) capPush(c);
+      store.capLatest = fresh.at(-1)!.seq;
+    }
+    store.wsState = 'live';
+  } catch {
+    store.wsState = 'fail';
+  }
 }
 
-export function savePrefs(next: PanelPrefs) {
-  store.prefs = next;
-  saveLocal(PREF_KEY, next);
+// 只按包名切作用域：设备/包身份真变才清空。
+let lastLoadedPkg = '';
+export async function syncCapScope() {
+  if (!store.chosenPkg || store.chosenPkg === lastLoadedPkg) return;
+  lastLoadedPkg = store.chosenPkg;
+  pollGen++;
+  store.capItems = [];
+  store.capLatest = 0;
+  store.capHasOlder = { crypto: false, system: false, net: false, keychain: false };
+  await capLoad();
 }
-export const currentApp = computed(() =>
-  store.apps.find((a) => a.bundleId === store.selected)
-  ?? store.installed.find((a) => a.bundleId === store.selected));
-export const selectedName = computed(() => currentApp.value?.name || store.selected || '应用记录');
+
+// ---- 设备轮询：失败保旧值。选择是服务器侧状态，选完同步本地。----
+export async function refreshDevices() {
+  try {
+    const r = await A.getDevices();
+    const list = r.devices ?? [];
+    store.devices = list.map(d => ({
+      key: d.id, id: d.id, address: d.address,
+      label: d.address.replace(/^https?:\/\//, ''),
+      online: d.online, selected: !!d.selected,
+    }));
+    store.devicesFailed = false;
+    store.devicesUpdated = Date.now();
+    store.wsState = 'live';
+    const sel = store.devices.find(d => d.selected) ?? store.devices[0];
+    if (!store.selectedDeviceKey && sel) store.selectedDeviceKey = sel.key;
+  } catch {
+    store.devicesFailed = true;
+    store.wsState = 'fail';
+  }
+}
+
+export async function chooseDevice(key: string) {
+  if (store.selectedDeviceKey === key) return;
+  store.selectedDeviceKey = key;
+  try {
+    await A.selectDevice(key);
+    // 设备切换 = 身份真变：应用列表与记录全部重载
+    pollGen++;
+    lastLoadedPkg = '';
+    store.chosenPkg = '';
+    store.capItems = [];
+    await refreshApps();
+  } catch {
+    store.devicesFailed = true;
+  }
+}
+
+export function choosePackage(pkg: string) {
+  if (store.chosenPkg === pkg) return;
+  store.chosenPkg = pkg;
+  void syncCapScope();
+}
+
+// ---- 应用列表：失败保旧值 ----
+export async function refreshScope() {
+  try {
+    const s = await A.getScope();
+    if (s.ok && Array.isArray(s.scope)) store.scope = new Set(s.scope);
+  } catch { /* scope 读取失败不遮罩主流程 */ }
+}
+
+export async function refreshApps() {
+  try {
+    const r = await A.getApps();
+    store.apps = r.apps ?? [];
+    if (Array.isArray(r.scope)) store.scope = new Set(r.scope);
+    store.appsError = r.error ?? '';
+    store.appsFailed = false;
+    store.wsState = 'live';
+  } catch {
+    store.appsFailed = true;
+    store.wsState = 'fail';
+  }
+}
+
+watch(() => store.appDialogOpen, open => { if (open) void refreshScope(); });
+watch(() => store.view, v => { if (v === 'settings') void refreshScope(); });
+
+// ---- 轮询（后台隐藏标签页暂停）----
+export function connectWs() { /* 无 WebSocket，保留入口名避免壳层改动 */ }
+export function startPolling() {
+  void refreshDevices();
+  void refreshApps();
+  void refreshScope();
+  setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    void pollNewEvents();
+  }, 2500);
+  setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    void refreshDevices();
+  }, 12000);
+  setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    void refreshApps();
+  }, 15000);
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        void refreshDevices();
+        void refreshApps();
+        void pollNewEvents();
+      }
+    });
+  }
+}
+
+// ---- 面板显示偏好（localStorage，仅当前浏览器）----
+export interface PanelDisplay { limit: number | null; time: 'time' | 'date'; density: 'standard' | 'compact'; rail: boolean }
+const PANEL_DISPLAY_KEY = 'idh.panel.display';
+export const DISPLAY_CAPS = [100, 200, 300, 500, 800];
+function normalizePanelDisplay(v?: Partial<PanelDisplay> | null): PanelDisplay {
+  return {
+    limit: v?.limit != null && DISPLAY_CAPS.includes(v.limit) ? v.limit : null,
+    time: v?.time === 'date' ? 'date' : 'time',
+    density: v?.density === 'compact' ? 'compact' : 'standard',
+    rail: v?.rail === true,
+  };
+}
+function readPanelDisplay(): PanelDisplay {
+  try { return normalizePanelDisplay(JSON.parse(localStorage.getItem(PANEL_DISPLAY_KEY) ?? '')); }
+  catch { return normalizePanelDisplay(); }
+}
+export const panelDisplay = reactive<PanelDisplay>(readPanelDisplay());
+export const hostDisplayCap = reactive({ value: 300 });
+export const capDisplayCap = computed(() => panelDisplay.limit ?? hostDisplayCap.value);
+export function savePanelDisplay(v?: Partial<PanelDisplay>) {
+  Object.assign(panelDisplay, normalizePanelDisplay(v));
+  try { localStorage.setItem(PANEL_DISPLAY_KEY, JSON.stringify(panelDisplay)); return true; }
+  catch { return false; }
+}
+
+// ---- 记录显示：按包隐藏的算法/类别键（localStorage）----
+const hiddenKeyFor = (pkg: string) => `idh.panel.hidden-hooks.v1:${pkg}`;
+export const hiddenHooks = reactive(new Set<string>());
+let hiddenPkg = '';
+function loadHidden() {
+  const pkg = store.chosenPkg;
+  if (pkg === hiddenPkg) return;
+  hiddenPkg = pkg;
+  hiddenHooks.clear();
+  if (!pkg) return;
+  try {
+    const saved = JSON.parse(localStorage.getItem(hiddenKeyFor(pkg)) ?? '[]') as unknown;
+    if (Array.isArray(saved)) for (const k of saved) if (typeof k === 'string' && k.length < 160) hiddenHooks.add(k);
+  } catch { /* 损坏当空集 */ }
+}
+watch(() => store.chosenPkg, loadHidden, { immediate: true });
+export function setHidden(key: string, show: boolean) {
+  if (show) hiddenHooks.delete(key); else hiddenHooks.add(key);
+  saveHidden();
+}
+export function resetHidden() {
+  hiddenHooks.clear();
+  saveHidden();
+}
+function saveHidden(): boolean {
+  if (!store.chosenPkg) return false;
+  try {
+    if (hiddenHooks.size) localStorage.setItem(hiddenKeyFor(store.chosenPkg), JSON.stringify([...hiddenHooks]));
+    else localStorage.removeItem(hiddenKeyFor(store.chosenPkg));
+    return true;
+  } catch { return false; }
+}
+export const capVisible = (c: A.DhEvent) => recordVisible(c, hiddenHooks);

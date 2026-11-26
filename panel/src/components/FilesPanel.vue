@@ -1,133 +1,159 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref, watch, onMounted } from 'vue';
 import { store, toast } from '../store';
-import * as A from '../api';
+import { fsList, fsPreview, fsDownloadUrl, type FsEntry, perfMs } from '../api';
+import { fmtSize } from '../capview';
 
 const path = ref('');
-const entries = ref<A.FileEntry[]>([]);
-const parent = ref<string | null>(null);
-const preview = ref<A.FilePreview | null>(null);
-const loading = ref(false);
-const previewLoading = ref(false);
-const error = ref('');
+const pathInput = ref('');
+const entries = ref<FsEntry[]>([]);
+const limited = ref(false);
+const state = ref<'idle' | 'loading' | 'ready' | 'error'>('idle');
+const message = ref('');
 
-const app = computed(() => store.selected);
+interface Preview { name: string; text?: string; truncated?: boolean; binary?: boolean; size?: number; message?: string; b64?: string; fullPath?: string }
+const preview = ref<Preview | null>(null);
+
 const crumbs = computed(() => {
-  const parts = path.value ? path.value.split('/') : [];
-  const rows: Array<{ name: string; path: string }> = [{ name: '沙盒', path: '' }];
-  let cur = '';
-  for (const part of parts) {
-    cur = cur ? cur + '/' + part : part;
-    rows.push({ name: part, path: cur });
-  }
-  return rows;
+  const parts = path.value.split('/').filter(Boolean);
+  const out: Array<{ name: string; p: string }> = [{ name: '/', p: '' }];
+  parts.forEach((n, i) => out.push({ name: n, p: '/' + parts.slice(0, i + 1).join('/') }));
+  return out;
 });
 
-function join(name: string) { return path.value ? `${path.value}/${name}` : name; }
-function fmtSize(n?: number) {
-  if (n == null) return '';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-function fmtTime(sec?: number) {
-  return sec ? new Date(sec * 1000).toLocaleString('zh-CN', { hour12: false }) : '';
-}
-
-async function load(next = path.value) {
-  if (!app.value) { entries.value = []; error.value = '先选择应用'; return; }
-  loading.value = true; error.value = '';
+async function load(p: string) {
+  const pkg = store.chosenPkg;
+  if (!pkg) { message.value = '先选择应用。'; return; }
+  state.value = 'loading';
+  const norm = p;
   try {
-    const data = await A.listFiles(app.value, next);
-    if (data.error) throw new Error(data.error);
-    path.value = data.path ?? next;
-    parent.value = data.parent ?? null;
-    entries.value = data.entries ?? [];
+    const r = await fsList(pkg, norm);
+    if (r.error) { state.value = 'error'; message.value = r.error; return; }
+    entries.value = (r.entries ?? []).slice().sort((a, b) =>
+      (a.type === 'dir' ? 0 : 1) - (b.type === 'dir' ? 0 : 1) || a.name.localeCompare(b.name));
+    limited.value = !!r.limited;
+    path.value = norm;
+    pathInput.value = norm;
+    preview.value = null;
+    state.value = 'ready';
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '设备目录暂时无法读取';
-    entries.value = [];
-  } finally { loading.value = false; }
+    state.value = 'error';
+    message.value = e instanceof Error ? e.message : '读取目录失败';
+  }
 }
-
-async function open(row: A.FileEntry) {
-  if (row.type === 'dir') { preview.value = null; await load(join(row.name)); return; }
-  await show(join(row.name));
-}
-
-async function show(file: string) {
-  if (!app.value) return;
-  previewLoading.value = true;
+async function openEntry(e: FsEntry) {
+  const p = path.value ? `${path.value.replace(/\/$/, '')}/${e.name}` : e.name;
+  if (e.type === 'dir') { void load(p); return; }
+  preview.value = { name: e.name, fullPath: p, message: '正在读取…' };
   try {
-    const data = await A.readFilePreview(app.value, file);
-    if (data.error) throw new Error(data.error);
-    preview.value = data;
-  } catch (e) {
-    preview.value = { path: file, error: e instanceof Error ? e.message : '文件暂时无法读取' };
-  } finally { previewLoading.value = false; }
+    const r = await fsPreview(store.chosenPkg, p);
+    if (r.error) { preview.value = { name: e.name, fullPath: p, message: r.error }; return; }
+    preview.value = {
+      name: e.name,
+      text: r.text ?? (r.hex ? `[hex] ${r.hex.slice(0, 4096)}` : undefined),
+      truncated: r.truncated, binary: r.binary, size: r.size ?? e.size,
+      b64: r.hex ? undefined : undefined, fullPath: p,
+      message: r.truncated ? '仅预览前部，未读完整文件。' : `${fmtSize(r.size ?? e.size)}${r.binary ? ' · 二进制' : ''}`,
+    };
+  } catch {
+    preview.value = { name: e.name, fullPath: p, message: '读取失败' };
+  }
 }
-
-function download(file?: string) {
-  const target = file ?? preview.value?.path;
-  if (!app.value || !target) return;
+function downloadPreview() {
+  const pv = preview.value;
+  if (!pv?.fullPath || !store.chosenPkg) return;
   const a = document.createElement('a');
-  a.href = A.fileDownloadUrl(app.value, target);
-  a.download = target.split('/').pop() ?? 'download';
+  a.href = fsDownloadUrl(store.chosenPkg, pv.fullPath);
+  a.download = pv.name;
   document.body.appendChild(a); a.click(); a.remove();
-  toast('已开始下载');
+  toast(`已下载 ${pv.name}`);
 }
+function copyPreview() {
+  const t = preview.value?.text;
+  if (t == null) return;
+  void navigator.clipboard?.writeText(t).then(() => toast('已复制'), () => toast('复制失败'));
+}
+function go(p: string) { void load(p); }
+function submitPath() { void load(pathInput.value.trim()); }
 
-watch(app, () => {
-  path.value = ''; parent.value = null; preview.value = null; error.value = '';
-  void load('');
-}, { immediate: true });
+const statText = computed(() => {
+  const ms = perfMs('GET /api/apps');
+  if (state.value === 'loading') return '正在读取目录…';
+  if (state.value === 'error') return message.value;
+  if (!store.chosenPkg) return '先选择应用。';
+  if (state.value === 'idle') return '输入路径或点击目录开始浏览。';
+  return `${Math.round(ms)}ms · ${entries.value.length} 项${limited.value ? ' · 目录过大已截断' : ''}`;
+});
+const fmtMtime = (m?: number) => {
+  if (!m) return '';
+  const ms = m < 1e12 ? m * 1000 : m;
+  return new Date(ms).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+
+watch(() => store.chosenPkg, () => { path.value = ''; entries.value = []; preview.value = null; state.value = 'idle'; void load(''); });
+onMounted(() => { if (store.chosenPkg) void load(''); });
 </script>
 
 <template>
-  <main class="tool-page files-tool">
-    <div class="tool-header"><div><h2>文件浏览</h2><p>{{ app || '无当前应用' }} 的 Documents / Library / tmp。</p></div>
-      <span class="pill tool-status">{{ loading ? '读取中' : error ? '读取失败' : '设备目录' }}</span></div>
-    <div v-if="error" class="notice warn">{{ error }}</div>
-    <div class="tool-surface files-workspace">
-      <section class="files-list-pane">
-        <div class="files-head">
-          <button type="button" :disabled="!path" @click="load(parent ?? '')">上级</button>
-          <button type="button" @click="load(path)">刷新</button>
-          <nav class="files-breadcrumb" aria-label="目录位置">
-            <template v-for="(c, i) in crumbs" :key="c.path || 'root'">
-              <a href="#" @click.prevent="load(c.path)">{{ c.name }}</a><span v-if="i < crumbs.length - 1" class="sep"> / </span>
-            </template>
-          </nav>
-        </div>
-        <div class="files-list">
-          <div v-for="row in entries" :key="row.name" class="files-row" :class="{ selected: preview?.path === join(row.name) }">
-            <button type="button" class="top" @click="open(row)">
-              <svg class="files-glyph" :class="{ dir: row.type === 'dir' }" viewBox="0 0 20 20" aria-hidden="true">
-                <path v-if="row.type === 'dir'" d="M3 5.5h5l1.6 2H17v8H3z" />
-                <path v-else d="M5 3h7l3 3v11H5zM12 3v3h3" />
-              </svg>
-              <span class="name">{{ row.name }}</span>
-            </button>
-            <span class="n">{{ row.type === 'file' ? fmtSize(row.size) : '目录' }}</span>
-            <span class="n">{{ fmtTime(row.mtime) }}</span>
-            <div class="files-actions">
-              <button v-if="row.type === 'file'" type="button" @click="show(join(row.name))">预览</button>
-              <a v-if="row.type === 'file'" :href="app ? A.fileDownloadUrl(app, join(row.name)) : undefined" :download="row.name">下载</a>
+  <section class="app-directory">
+    <div class="app-directory-inner">
+      <p v-if="!store.chosenPkg" class="directory-unavailable">选择注入范围里的应用后浏览它的私有目录。</p>
+      <div v-else class="directory-workspace">
+        <aside class="directory-list">
+          <div class="directory-list-head">
+            <div class="directory-pane-head">
+              <h3>目录</h3>
+              <button type="button" class="compact-action" @click="load(path)">刷新</button>
+            </div>
+            <input v-model="pathInput" class="directory-root mono" placeholder="沙盒路径，留空为根"
+              @keyup.enter="submitPath" />
+            <nav class="directory-path">
+              <template v-for="(c, i) in crumbs" :key="c.p || 'root'">
+                <button type="button" class="directory-crumb" :aria-current="i === crumbs.length - 1 ? 'page' : undefined"
+                  @click="go(c.p)">{{ c.name }}</button>
+              </template>
+            </nav>
+            <p class="set-status">{{ statText }}</p>
+          </div>
+          <div class="directory-rows">
+            <table class="directory-list-table">
+              <thead>
+                <tr><th>名称</th><th>大小</th><th>修改时间</th></tr>
+              </thead>
+              <tbody>
+                <tr v-if="path && path !== '/'" @click="go(path.replace(/\/[^/]*$/, '') || '/')">
+                  <td colspan="3"><button type="button" class="directory-entry" data-directory="true">..</button></td>
+                </tr>
+                <tr v-for="e in entries" :key="e.name" :class="{ selected: preview?.name === e.name }"
+                  @click="openEntry(e)">
+                  <td><button type="button" class="directory-entry" :data-directory="e.type === 'dir'">
+                      {{ e.name }}{{ e.type === 'dir' ? '/' : '' }}</button></td>
+                  <td>{{ e.type === 'dir' ? '' : fmtSize(e.size) }}</td>
+                  <td class="muted">{{ fmtMtime(e.mtime) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-if="state === 'ready' && !entries.length" class="empty">空目录。</div>
+          </div>
+        </aside>
+        <section class="directory-preview">
+          <div class="directory-pane-head">
+            <h3>{{ preview?.name || '文件内容' }}</h3>
+            <div class="directory-preview-actions">
+              <span class="directory-readonly">只读</span>
+              <button type="button" class="compact-action" :disabled="!preview?.fullPath" @click="downloadPreview">下载</button>
+              <button type="button" class="compact-action" :disabled="preview?.text == null" @click="copyPreview">复制</button>
             </div>
           </div>
-          <p v-if="!loading && !entries.length && !error" class="tool-note" style="padding:14px">此目录为空。</p>
-        </div>
-      </section>
-      <section class="tool-content" style="flex:1;min-width:0;overflow:auto">
-        <div v-if="preview" class="files-preview-head">
-          <span class="path">{{ preview.path }}</span>
-          <span class="n">{{ fmtSize(preview.size) }}{{ preview.truncated ? ' · 已截断' : '' }}</span>
-          <button type="button" class="hbtn" @click="download()">下载</button>
-        </div>
-        <p v-if="previewLoading" class="tool-note">正在读取文件。</p>
-        <pre v-if="preview?.text" id="filesPreviewBody" :class="{ hex: preview.format === 'hex' }">{{ preview.text }}</pre>
-        <p v-else-if="preview?.error" class="tool-note">{{ preview.error }}</p>
-        <p v-else-if="!preview && !previewLoading" class="tool-note">选择左侧文件查看内容。</p>
-      </section>
+          <p class="set-status">{{ preview?.message || (preview ? '' : '从左侧选择一个文件。') }}</p>
+          <pre v-if="preview?.text != null">{{ preview.text }}</pre>
+        </section>
+      </div>
     </div>
-  </main>
+  </section>
 </template>
+
+<style scoped>
+.directory-rows tbody tr { cursor: pointer; }
+.directory-rows tbody tr td { font-size: 12px; }
+</style>
