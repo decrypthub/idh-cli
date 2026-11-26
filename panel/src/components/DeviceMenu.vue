@@ -19,8 +19,8 @@ function pick(key: string) { emit('select', key); open.value = false; }
 
 // 与 ADH 同一套分组与行结构：在线/离线分组 + 行内动作
 const groups = computed(() => [
-  { label: '在线', rows: props.devices.filter(d => d.online !== false) },
-  { label: '离线', rows: props.devices.filter(d => d.online === false) },
+  { label: '在线', rows: props.devices.filter(d => d.online === true) },
+  { label: '离线', rows: props.devices.filter(d => d.online !== true) },
 ].filter(g => g.rows.length));
 
 function onDocClick(e: MouseEvent) {
@@ -138,7 +138,7 @@ async function remove(d: DeviceView) {
           </span>
         </div>
       </template>
-      <div v-if="!devices.length" class="app-empty">{{ store.devicesLoading ? '正在读取设备…' : '没有设备' }}</div>
+      <div v-if="!devices.length" class="app-empty">{{ store.devicesLoading ? '正在读取设备…' : '没有设备。在下面填地址添加。' }}</div>
 
       <template v-if="usb.length">
         <div class="app-section">USB 设备</div>

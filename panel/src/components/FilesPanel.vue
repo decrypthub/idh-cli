@@ -15,7 +15,6 @@ import {
   FolderOutline,
   ImageOutline,
   KeyOutline,
-  LinkOutline,
   RefreshOutline,
   SearchOutline,
 } from '@vicons/ionicons5';
@@ -42,7 +41,6 @@ interface Preview {
 const path = ref('');
 const pathInput = ref('');
 const entries = ref<FsEntry[]>([]);
-const limited = ref(false);
 const state = ref<'idle' | 'loading' | 'ready' | 'error'>('idle');
 const message = ref('');
 const filter = ref('');
@@ -51,6 +49,7 @@ const sortDir = ref<1 | -1>(1);
 const preview = shallowRef<Preview | null>(null);
 
 let listSeq = 0;
+let readSeq = 0;
 const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
 
 const isDir = (e: FsEntry) => e.type === 'dir';
@@ -86,12 +85,12 @@ const statText = computed(() => {
   if (state.value === 'error') return message.value;
   if (!store.chosenPkg) return '未选择应用';
   if (state.value === 'idle') return '等待读取';
-  return `${countText.value} · ${Math.round(ms)}ms${limited.value ? ' · 已截断' : ''}`;
+  return `${countText.value} · ${Math.round(ms)}ms`;
 });
 
 function joinPath(parent: string, name: string) {
   const base = parent.replace(/\/+$/, '');
-  return `${base}/${name}` || '/';
+  return base ? `${base}/${name}` : name;
 }
 
 function extension(name: string) {
@@ -104,8 +103,8 @@ function entryKind(e: FsEntry): EntryKind {
   const ext = extension(e.name);
   if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'heic', 'svg'].includes(ext)) return 'image';
   if (['key', 'pem', 'crt', 'cer', 'der', 'p12', 'pfx', 'mobileprovision'].includes(ext)) return 'key';
-  if (['db', 'sqlite', 'sqlite3', 'realm', 'plist', 'strings'].includes(ext)) return 'db';
-  if (['txt', 'log', 'xml', 'json', 'js', 'ts', 'm', 'h', 'c', 'cc', 'cpp', 'md', 'conf', 'cfg', 'ini', 'yaml', 'yml', 'html', 'css', 'sh', 'plist'].includes(ext)) return 'text';
+  if (['db', 'sqlite', 'sqlite3', 'realm'].includes(ext)) return 'db';
+  if (['txt', 'log', 'xml', 'json', 'js', 'ts', 'm', 'h', 'c', 'cc', 'cpp', 'md', 'conf', 'cfg', 'ini', 'yaml', 'yml', 'html', 'css', 'sh', 'plist', 'strings'].includes(ext)) return 'text';
   if (['dylib', 'so', 'a', 'bin', 'dat', 'elf', 'car', 'nib', 'momd'].includes(ext)) return 'binary';
   return 'file';
 }
@@ -132,6 +131,7 @@ async function load(p: string) {
   const token = ++listSeq;
   state.value = 'loading';
   message.value = '';
+  entries.value = [];   // 先清空：否则旧目录的行会和骨架屏/错误态混在一起
   const norm = (p || '').trim();
   try {
     const r = await fsList(pkg, norm);
@@ -142,10 +142,11 @@ async function load(p: string) {
       return;
     }
     entries.value = r.entries ?? [];
-    limited.value = !!r.limited;
-    path.value = norm;
-    pathInput.value = norm;
+    // 路径以设备返回的相对路径为准（它回的 path 不带前导斜杠，parent 由它自己算）
+    path.value = r.path ?? norm;
+    pathInput.value = path.value;
     filter.value = '';
+    readSeq++;          // 换目录时作废在途的预览请求
     preview.value = null;
     state.value = 'ready';
   } catch (e) {
@@ -158,9 +159,11 @@ async function load(p: string) {
 async function openEntry(e: FsEntry) {
   const full = joinPath(path.value, e.name);
   if (isDir(e)) { void load(full); return; }
+  const token = ++readSeq;
   preview.value = { name: e.name, fullPath: full, loading: true };
   try {
     const r = await fsPreview(store.chosenPkg, full);
+    if (token !== readSeq) return;   // 期间切了目录/应用：这次响应已经不作数
     if (r.error) {
       preview.value = { name: e.name, fullPath: full, error: true, message: r.error };
       return;
@@ -172,9 +175,10 @@ async function openEntry(e: FsEntry) {
       format: r.format === 'hex' ? 'hex' : 'text',
       size: r.size ?? e.size,
       truncated: !!r.truncated,
-      message: r.truncated ? '只预览了前部，未读完整文件' : '',
+      message: r.truncated ? '只预览前 64 KB，完整内容请下载' : '',
     };
   } catch {
+    if (token !== readSeq) return;
     preview.value = { name: e.name, fullPath: full, error: true, message: '读取失败' };
   }
 }
@@ -217,7 +221,6 @@ function sortIcon(key: SortKey) {
 }
 
 function retryLoad() { void load(pathInput.value.trim() || path.value); }
-function go(p: string) { void load(p); }
 function goUp() { if (parentPath.value) void load(parentPath.value); }
 function submitPath() { void load(pathInput.value.trim()); }
 

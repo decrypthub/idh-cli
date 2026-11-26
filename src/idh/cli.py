@@ -914,6 +914,10 @@ _BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}")
 _PANEL_JSON_MAX_BYTES = 16 * 1024 * 1024
 
 
+class PanelPayloadTooLarge(Exception):
+    """设备应答超过面板代理上限（不是设备掉线，不能报成 device_unavailable）。"""
+
+
 def _panel_request(
     endpoint: AppEndpoint, path: str, *, body: bytes | None = None
 ) -> tuple[int, object]:
@@ -926,7 +930,8 @@ def _panel_request(
         response = connection.getresponse()
         payload = response.read(_PANEL_JSON_MAX_BYTES + 1)
         if len(payload) > _PANEL_JSON_MAX_BYTES:
-            raise ValueError(f"device response too large: {path}")
+            print(f"idh: device response too large (>{_PANEL_JSON_MAX_BYTES} bytes): {path}", file=sys.stderr)
+            raise PanelPayloadTooLarge(path)
         return response.status, json.loads(payload) if payload else None
 
 
@@ -1016,7 +1021,7 @@ def _run_panel(args: argparse.Namespace) -> int:
     except UsageError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    except (HTTPException, OSError, ValueError) as exc:
+    except (HTTPException, OSError, ValueError, PanelPayloadTooLarge) as exc:
         if args.endpoint:
             # 显式 --endpoint 指定了目标却连不上：按原来的语义直接失败，别让人对着空面板猜
             print(str(exc), file=sys.stderr)
@@ -1069,7 +1074,7 @@ def _run_panel(args: argparse.Namespace) -> int:
                 return
             try:
                 code, data = _panel_request(endpoint, _PANEL_SETTINGS_ROUTE, body=body)
-            except (HTTPException, OSError, ValueError, UsageError):
+            except (HTTPException, OSError, ValueError, UsageError, PanelPayloadTooLarge):
                 self.write_json(502, {"error": "device_unavailable"})
                 return
             if code not in {200, 400, 401, 403, 404, 409, 500}:
@@ -1245,7 +1250,7 @@ def _run_panel(args: argparse.Namespace) -> int:
                     return
             try:
                 code, data = _panel_request(endpoint, self.path, body=body)
-            except (HTTPException, OSError, ValueError, UsageError):
+            except (HTTPException, OSError, ValueError, UsageError, PanelPayloadTooLarge):
                 self.write_json(502, {"error": "device_unavailable"})
                 return
             if code not in {200, 400, 401, 403, 404, 409, 500}:
@@ -1301,6 +1306,10 @@ def _run_panel(args: argparse.Namespace) -> int:
                         self.write_body(200, blob, kind)
                         return
                     code, data = _panel_request(current["endpoint"], self.path)
+                except PanelPayloadTooLarge:
+                    # 应答过大是「取的东西太多」，不是设备掉线：给前端一个可读的原因
+                    self.write_json(502, {"error": "response_too_large"})
+                    return
                 except (HTTPException, OSError, ValueError, UsageError):
                     self.send_error(502)
                     return
@@ -1332,6 +1341,9 @@ def _run_panel(args: argparse.Namespace) -> int:
                     return
                 try:
                     code, data = _panel_request(current["endpoint"], self.path)
+                except PanelPayloadTooLarge:
+                    self.write_json(502, {"error": "response_too_large"})
+                    return
                 except (HTTPException, OSError, ValueError, UsageError):
                     self.send_error(502)
                     return

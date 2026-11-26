@@ -126,7 +126,6 @@
   .device-row { display:flex; align-items:center; gap:4px; }
   .device-row .app-item { flex:1; min-width:0; }
   .device-row-actions { flex:none; display:flex; gap:4px; }
-  .device-row-actions .dl-link { min-height:28px; padding:0 8px; }
   .device-add { display:flex; gap:6px; align-items:center; margin:8px 6px 4px; }
   .device-usb-id { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 8px; }
   .device-error { margin:2px 7px 5px; color:var(--danger); font-size:11px; line-height:1.35; }
