@@ -1,98 +1,186 @@
-// 面板 REST 层：全部走本机 idh 服务的 /api 中转，不直连设备。
-import type { DeviceRow, DeviceSession, DeviceInfo, InstalledApp, EventItem } from './model';
+// IDH 面板 API 客户端。直连 idh-cli 面板服务器（同源），服务器转发到当前选中设备的 idhjd。
+// 数据模型是 iOS 原生语义：事件 category 为 0-8 数字、kind 为 crypto/network/observation，
+// 加密事件携带 keyHex/ivHex/inputHex/outputHex 真实字节（agent 截断到 64/32/256/256 字节）。
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(path, init);
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) { (data as Record<string, unknown>).__status = r.status; }
-  return data as T;
+// ---- 类型：IDH 原生事件模型 ----
+export interface DhEvent {
+  seq: number; appSeq?: number; sourceSeq?: number; agentSeq?: number;
+  timeMs: number; category: number; kind: string;
+  algorithm?: string; operation?: string; detail?: string; preview?: string;
+  publicKeyInfo?: string;
+  inLen?: number; outLen?: number; keyLen?: number; ivLen?: number;
+  keyHex?: string; ivHex?: string; inputHex?: string; outputHex?: string;
+  phase?: string; update?: boolean;
+  callId?: string; parentCallId?: string; asyncTaskId?: string;
 }
-const post = (path: string, body: unknown) =>
-  api<Record<string, unknown>>(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+// category: 0 摘要 1 HMAC 2 对称 3 非对称 4 文件 5 系统 6 网络 7 Keychain 8 其他
+export const CAT = { digest: 0, hmac: 1, sym: 2, asym: 3, file: 4, system: 5, net: 6, keychain: 7, other: 8 } as const;
+export const CRYPTO_CATS = '0,1,2,3';
+export const SYSTEM_CATS = '4,5';
 
-export const getHealth = () => api<DeviceInfo>('/health');
-export const getSessions = () => api<{ sessions?: DeviceSession[] }>('/api/sessions');
-export const getApps = () => api<{ apps?: InstalledApp[]; scope?: string[]; error?: string }>('/api/apps');
-export interface EventPage {
-  events?: EventItem[]; hasMore?: boolean; hasOlder?: boolean;
-  oldestSeq?: number; latestSeq?: number;
-  summary?: { count?: number; lastSeq?: number; byCategory?: number[] };
+export interface EventsReply {
+  ok?: boolean; events?: DhEvent[];
+  hasMore?: number; hasOlder?: number;
+  latestSeq?: number; oldestSeq?: number; next?: number;
+  summary?: { lastSeq?: number; count?: number; updatedAtMs?: number; bundleId?: string; byCategory?: number[] };
+  error?: string;
 }
-export const getAppEvents = (bundleId: string, opts: { after?: number; before?: number; limit?: number } = {}) => {
-  const q = new URLSearchParams({ limit: String(opts.limit ?? 150) });
-  if (opts.after != null) q.set('after', String(opts.after));
-  if (opts.before != null) q.set('before', String(opts.before));
-  return api<EventPage>(`/api/apps/${encodeURIComponent(bundleId)}/events?${q}`);
-};
-export const clearAppEvents = (bundleId: string) =>
-  api<{ ok?: boolean; error?: string }>('/api/apps/clear', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bundleId }),
-  });
-export const appIconUrl = (bundleId: string) => `/api/apps/${encodeURIComponent(bundleId)}/icon`;
-export const getDevices = () => api<{ devices?: DeviceRow[]; usb?: string[] }>('/api/devices');
-export const deviceAction = (body: Record<string, unknown>) => post('/api/devices', body);
-export const getScope = () => api<{ scope?: string[]; error?: string }>('/api/injection-scope');
-export const scopeUpdate = (bundleId: string, on: boolean) =>
-  api<{ scope?: string[]; error?: string }>('/api/injection-scope',
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [on ? 'add' : 'remove']: [bundleId] }) });
-export const relaunchApp = (bundleId: string) => post('/api/apps/relaunch', { bundleId });
 
-// 进程工具接口：本机面板中转 /api/apps/<bundle>/tools/...，设备 idhjd 再代理到在线进程。
-const toolPath = (bundleId: string, path: string) =>
-  `/api/apps/${encodeURIComponent(bundleId)}/tools/${path}`;
+export interface DhDevice {
+  id: string; address: string; kind: string; transport?: string | null;
+  online: boolean | null; selected: boolean;
+}
+/** 重连结果：内核侧重新解析并探活后的结论。 */
+export interface DeviceReconnect {
+  id?: string; online?: boolean; movedFrom?: string | null; error?: string | null;
+}
+export interface DevicesReply {
+  devices?: DhDevice[]; usb?: string[]; selected?: string;
+  reconnect?: DeviceReconnect; error?: string;
+}
 
-export interface FileEntry { name: string; type: 'dir' | 'file'; size?: number; mtime?: number }
-export interface FileList { path?: string; parent?: string | null; entries?: FileEntry[]; error?: string }
-export interface FilePreview { path?: string; size?: number; truncated?: boolean; format?: 'text' | 'hex'; text?: string; error?: string }
-export const listFiles = (bundleId: string, path = '') =>
-  api<FileList>(`${toolPath(bundleId, 'files')}?path=${encodeURIComponent(path)}`);
-export const readFilePreview = (bundleId: string, path: string) =>
-  api<FilePreview>(`${toolPath(bundleId, 'files/preview')}?path=${encodeURIComponent(path)}&limit=65536`);
-export const fileDownloadUrl = (bundleId: string, path: string) =>
-  `${toolPath(bundleId, 'files/download')}?path=${encodeURIComponent(path)}`;
+export interface DhApp {
+  bundleId: string; name?: string; execName?: string;
+  kind?: string; running?: boolean;
+}
+/** /api/apps 的 recorded[]：idhjd 侧已记录过事件的 App 清单（服务端只返回 total>0 的，
+ *  并按 updated_ms DESC 排序），含当前是否有活进程。 */
+export interface DhRecordedApp {
+  bundleId: string;
+  /** idhjd 用 int 装箱（@(live != nil) → numberWithInt），JSON 化成 1/0；
+   *  apps[] 的 running 是 BOOL 装箱，JSON 化成 true/false。两种都要认。 */
+  running?: boolean | number;
+  // 以下字段对应真实 payload，前端目前只消费 bundleId/running。
+  pid?: number; count?: number; lastSeq?: number; updatedAtMs?: number;
+  byCategory?: number[]; processGeneration?: string; httpPort?: number;
+}
+export interface AppsReply {
+  ok?: boolean; scope?: string[]; apps?: DhApp[]; recorded?: DhRecordedApp[]; error?: string;
+}
+/** running 归一：recorded[] 里是 1/0，apps[] 里是 true/false。 */
+export const isRunning = (v: unknown): boolean => v === true || v === 1 || v === 'true' || v === '1';
 
-export interface SymbolImage { idx: number; name: string; main?: boolean; imports?: number }
-export interface SymbolImages { images?: SymbolImage[]; error?: string }
-export interface SymbolRows { idx?: number; name?: string; total?: number; shown?: number; symbols?: string[]; error?: string }
-export const listSymbolImages = (bundleId: string) => api<SymbolImages>(toolPath(bundleId, 'symbols/images'));
-export const listSymbols = (bundleId: string, img: number, q = '', limit = 300) =>
-  api<SymbolRows>(`${toolPath(bundleId, 'symbols')}?img=${img}&q=${encodeURIComponent(q)}&limit=${limit}`);
+export interface FsEntry { name: string; type: string; size?: number; mtime?: number }
+export interface FsListReply { path?: string; parent?: string | null; entries?: FsEntry[]; limited?: boolean; error?: string }
+// idhjd 的预览只回一种形态：format=text 是文本，format=hex 是已经排好版的 hexdump。
+export interface FsPreviewReply {
+  ok?: boolean; path?: string; text?: string; format?: 'text' | 'hex';
+  size?: number; truncated?: boolean; error?: string;
+}
 
-export interface DumpImage { name: string; kind?: string; cryptid?: number; encrypted?: boolean; size?: number }
-export interface DumpImages { images?: DumpImage[]; encryptedCount?: number; total?: number; error?: string }
 export interface DumpStatus {
-  state?: 'idle' | 'running' | 'done' | 'error'; mode?: string; progress?: number; stage?: string;
-  error?: string; binReady?: boolean; ipaReady?: boolean; binName?: string; ipaName?: string;
+  state?: string; stage?: string; progress?: number; mode?: string;
+  binReady?: boolean; ipaReady?: boolean; binName?: string; ipaName?: string; error?: string;
 }
-export const getDumpImages = (bundleId: string) => api<DumpImages>(toolPath(bundleId, 'dump/images'));
-export const getDumpStatus = (bundleId: string) => api<DumpStatus>(toolPath(bundleId, 'dump/status'));
-export const startDump = (bundleId: string, mode: 'bin' | 'ipa') =>
-  api<{ started?: boolean; error?: string }>(`${toolPath(bundleId, 'dump')}?mode=${mode}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-  });
-export const dumpDownloadUrl = (bundleId: string, kind: 'bin' | 'ipa') =>
-  `${toolPath(bundleId, 'dump/download')}?kind=${kind}`;
-export const dumpImageUrl = (bundleId: string, name: string) =>
-  `${toolPath(bundleId, 'dump/image')}?name=${encodeURIComponent(name)}`;
-// 会话设置走 /api/session-settings 中转；设备错误码在此翻成可读文案（沿用旧适配层）。
-const SETTINGS_ERRORS: Record<string, string> = {
-  settings_pairing_required: '设备设置暂不可用。',
-  revision_conflict: '设备配置已被修改。请重新载入后再应用。',
-  invalid_settings: '设备会话限额需要整数，支持 1–2000 条、512–2097152 字节和 1–300 秒。',
-  settings_storage_error: '设备无法读取或保存设置。',
-  settings_unavailable: '当前设备服务尚未提供设置接口。',
-};
-interface SettingsReply { revision?: string; deviceSession?: Record<string, unknown>; error?: string }
-async function settingsRequest(body?: unknown): Promise<SettingsReply> {
-  const r = await fetch('/api/session-settings', body === undefined ? {} : {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
-  const data = await r.json().catch(() => ({})) as { error?: string } & SettingsReply;
-  if (!r.ok || data.error) {
-    return { error: SETTINGS_ERRORS[data.error ?? ''] ?? '设备设置暂时无法读取或保存。' };
+
+// ---- 耗时统计（保留 ADH 工艺）----
+export interface PerfSample { last: number; total: number; peak: number; n: number }
+const perf = new Map<string, PerfSample>();
+export function perfStats() { return perf; }
+export function perfMs(label: string) { return perf.get(label)?.last ?? 0; }
+export function perfReport() {
+  return [...perf.entries()]
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([k, s]) => `${k}  last=${Math.round(s.last)}ms avg=${Math.round(s.total / s.n)}ms peak=${Math.round(s.peak)}ms n=${s.n}`);
+}
+if (typeof window !== 'undefined') (window as unknown as { perfReport: typeof perfReport }).perfReport = perfReport;
+function notePerf(label: string, ms: number) {
+  const s = perf.get(label) ?? { last: 0, total: 0, peak: 0, n: 0 };
+  s.last = ms; s.total += ms; s.peak = Math.max(s.peak, ms); s.n++;
+  perf.set(label, s);
+}
+
+export async function api<T = unknown>(path: string, init?: RequestInit, timeoutMs = 8000): Promise<T> {
+  const label = `${init?.method ?? 'GET'} ${path.split('?')[0]}`;
+  const t0 = performance.now();
+  try {
+    const res = await fetch(path, { ...init, signal: AbortSignal.timeout(timeoutMs), cache: 'no-store' });
+    const ms = performance.now() - t0;
+    notePerf(label, ms);
+    if (!res.ok) {
+      // 服务端的 {"error": "..."} 比 "400 Bad Request" 有用得多：设备增删的失败原因要靠它
+      let detail = '';
+      try {
+        const body = (await res.json()) as { error?: unknown };
+        if (body && typeof body.error === 'string') detail = body.error;
+      } catch { /* 错误体不一定是 JSON */ }
+      throw new Error(detail || `${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as T;
+  } catch (e) {
+    notePerf(label, performance.now() - t0);
+    throw e;
   }
-  return data;
 }
-export const getSettingsExport = () => settingsRequest();
-export const postSettingsImport = (body: { revision: string; deviceSession: Record<string, number> }) =>
-  settingsRequest(body);
+const post = <T = unknown>(path: string, body: unknown, timeoutMs?: number) =>
+  api<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, timeoutMs);
+// 设备变更类请求：服务端要先探活目标设备（3s），再把列表里每台重新探活一次（3s，并行），
+// 用默认 8s 会在 4 台设备时偶发超时——客户端取消但服务端已经写盘，表现为「报错但设备已加上」。
+const DEVICE_TIMEOUT_MS = 30000;
+const postDevice = <T = unknown>(body: unknown) => post<T>('/api/devices', body, DEVICE_TIMEOUT_MS);
+
+// ---- 设备 ----
+// 列表同理要放宽：服务端对每台设备做 health + /api/stats 两次探测（各 3s），设备多时
+// 默认 8s 会偶发超时，导致「删掉的设备还在列表里」这种看起来像缓存的假象。
+export const getDevices = () => api<DevicesReply>('/api/devices', undefined, DEVICE_TIMEOUT_MS);
+export const selectDevice = (id: string) => postDevice<DevicesReply>({ action: 'select', id });
+export const addDevice = (address: string) => postDevice<DevicesReply>({ action: 'add', address });
+export const addUsbDevice = (udid: string) => postDevice<DevicesReply>({ action: 'add', usb: udid });
+export const removeDevice = (id: string) => postDevice<DevicesReply>({ action: 'remove', id });
+export const reconnectDevice = (id: string) => postDevice<DevicesReply>({ action: 'reconnect', id });
+
+// ---- 应用与注入范围（作用于当前选中设备）----
+export const getApps = () => api<AppsReply>('/api/apps');
+export const getScope = () => api<{ ok?: boolean; scope?: string[] }>('/api/injection-scope');
+export const scopeAdd = (bundle: string) => post('/api/injection-scope', { add: [bundle], remove: [] });
+export const scopeRemove = (bundle: string) => post('/api/injection-scope', { add: [], remove: [bundle] });
+export const relaunchApp = (bundle: string) => post<{ ok?: boolean; relaunched?: boolean; error?: string }>('/api/apps/relaunch', { bundleId: bundle });
+export const clearAppEvents = (bundle: string) => post<{ ok?: boolean; error?: string }>('/api/apps/clear', { bundleId: bundle });
+export const appIconUrl = (bundle: string) => `/api/apps/${encodeURIComponent(bundle)}/icon`;
+
+// ---- 事件 ----
+export interface EventsQuery {
+  categories?: string;   // 逗号分隔数字，如 '0,1,2,3'
+  limit?: number;
+  after?: number;        // 增量：取 seq > after
+  before?: number;       // 分页：取 seq < before（向过去翻页）
+}
+export function getEvents(bundle: string, q: EventsQuery = {}) {
+  const p = new URLSearchParams();
+  if (q.categories) p.set('categories', q.categories);
+  // idhjd 单页硬上限 200，超限直接 4xx/502；更大的分页靠 before 游标
+  if (q.limit != null) p.set('limit', String(Math.min(q.limit, 200)));
+  if (q.after != null) p.set('after', String(q.after));
+  if (q.before != null) p.set('before', String(q.before));
+  return api<EventsReply>(`/api/apps/${encodeURIComponent(bundle)}/events?${p.toString()}`);
+}
+
+// ---- 进程工具（经 idhjd 代理到进程内 agent）----
+const tools = (bundle: string, path: string) => `/api/apps/${encodeURIComponent(bundle)}/tools/${path}`;
+export const fsList = (bundle: string, path: string) =>
+  api<FsListReply>(`${tools(bundle, 'files')}?path=${encodeURIComponent(path)}`);
+export const fsPreview = (bundle: string, path: string) =>
+  api<FsPreviewReply>(`${tools(bundle, 'files/preview')}?path=${encodeURIComponent(path)}`);
+export const fsDownloadUrl = (bundle: string, path: string) =>
+  `${tools(bundle, 'files/download')}?path=${encodeURIComponent(path)}`;
+
+export interface SymbolsImage { idx?: number; main?: boolean; name?: string; imports?: number }
+export interface DumpImage { name?: string; kind?: string; size?: number; cryptid?: number; encrypted?: boolean }
+export const getImages = (bundle: string) =>
+  api<{ images?: SymbolsImage[]; error?: string }>(tools(bundle, 'symbols/images'));
+export const getDumpImages = (bundle: string) =>
+  api<{ images?: DumpImage[]; total?: number; encryptedCount?: number; error?: string }>(tools(bundle, 'dump/images'));
+export const searchSymbols = (bundle: string, q: string, image?: string) => {
+  const p = new URLSearchParams({ q });
+  if (image) p.set('image', image);
+  return api<{ symbols?: Array<{ name?: string; address?: string; image?: string }>; error?: string }>(
+    `${tools(bundle, 'symbols')}?${p.toString()}`);
+};
+
+export const getDumpStatus = (bundle: string) => api<DumpStatus>(tools(bundle, 'dump/status'));
+export const startDump = (bundle: string, mode: 'bin' | 'ipa') =>
+  post<{ started?: boolean; error?: string }>(`${tools(bundle, 'dump')}?mode=${mode}`, {});
+export const dumpDownloadUrl = (bundle: string, kind: 'bin' | 'ipa') =>
+  `${tools(bundle, 'dump/download')}?kind=${kind}`;
+export const dumpImageUrl = (bundle: string, name: string) =>
+  `${tools(bundle, 'dump/image')}?name=${encodeURIComponent(name)}`;

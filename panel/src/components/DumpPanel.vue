@@ -1,104 +1,150 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import { store, toast } from '../store';
-import * as A from '../api';
+import { getDumpStatus, startDump, dumpDownloadUrl, dumpImageUrl, getDumpImages, type DumpStatus, type DumpImage } from '../api';
+import { fmtSize } from '../capview';
 
-const app = computed(() => store.selected);
-const images = ref<A.DumpImage[]>([]);
-const status = ref<A.DumpStatus | null>(null);
-const loading = ref(false);
-const starting = ref('');
-const error = ref('');
+const status = ref<DumpStatus>({});
+const state = ref<'idle' | 'loading' | 'ready' | 'error'>('idle');
+const message = ref('');
+const starting = ref(false);
+const images = ref<DumpImage[]>([]);
+const imagesError = ref('');
+
+const running = computed(() => status.value.state === 'running' || status.value.state === 'dumping');
+
+async function refresh() {
+  const pkg = store.chosenPkg;
+  if (!pkg) { state.value = 'idle'; message.value = '先选择应用。'; return; }
+  state.value = 'loading';
+  try {
+    const r = await getDumpStatus(pkg);
+    status.value = r ?? {};
+    state.value = 'ready';
+    message.value = '';
+  } catch (e) {
+    state.value = 'error';
+    message.value = e instanceof Error ? e.message : '读取 Dump 状态失败';
+  }
+}
+
+async function refreshImages() {
+  const pkg = store.chosenPkg;
+  if (!pkg) { images.value = []; return; }
+  try {
+    const r = await getDumpImages(pkg);
+    images.value = r.images ?? [];
+    imagesError.value = r.error ?? '';
+  } catch {
+    imagesError.value = '模块列表读取失败（进程不在线？）';
+  }
+}
+
+async function run(mode: 'bin' | 'ipa') {
+  const pkg = store.chosenPkg;
+  if (!pkg || starting.value) return;
+  starting.value = true;
+  try {
+    const r = await startDump(pkg, mode);
+    if (r?.started) {
+      toast(`已开始 ${mode === 'ipa' ? 'IPA' : '主二进制'} Dump`);
+      setTimeout(() => void refresh(), 1500);
+    } else {
+      toast(r?.error || 'Dump 启动失败');
+    }
+  } catch {
+    toast('Dump 请求失败（进程不在线？）');
+  } finally {
+    starting.value = false;
+  }
+}
+
+function download(kind: 'bin' | 'ipa') {
+  const pkg = store.chosenPkg;
+  if (!pkg) return;
+  const a = document.createElement('a');
+  a.href = dumpDownloadUrl(pkg, kind);
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('开始下载');
+}
+
+function downloadImage(img: DumpImage) {
+  const pkg = store.chosenPkg;
+  if (!pkg || !img.name) return;
+  const a = document.createElement('a');
+  a.href = dumpImageUrl(pkg, img.name);
+  document.body.appendChild(a); a.click(); a.remove();
+  toast(`开始下载 ${img.name}`);
+}
+
+const stateText = computed(() => {
+  const s = status.value;
+  if (state.value === 'error') return message.value;
+  if (s.state === 'idle' || !s.state) return '空闲';
+  if (s.state === 'done') return '完成';
+  if (s.error) return `失败：${s.error}`;
+  return `${s.state}${s.stage ? ' · ' + s.stage : ''}${s.progress ? ` · ${Math.round(s.progress * 100)}%` : ''}`;
+});
+
 let poll = 0;
-
-function fmtSize(n?: number) {
-  if (n == null) return '—';
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-function stateText(s?: string) {
-  return { idle: '空闲', running: '运行中', done: '已完成', error: '失败' }[s ?? ''] ?? '未读取';
-}
-
-async function load() {
-  if (!app.value) { images.value = []; status.value = null; error.value = '先选择应用'; return; }
-  loading.value = true; error.value = '';
-  try {
-    const [imgs, st] = await Promise.all([A.getDumpImages(app.value), A.getDumpStatus(app.value)]);
-    if (imgs.error) throw new Error(imgs.error);
-    images.value = imgs.images ?? [];
-    status.value = st;
-    schedule(st);
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Dump 状态暂时无法读取';
-  } finally { loading.value = false; }
-}
-
-function schedule(st: A.DumpStatus | null) {
-  window.clearTimeout(poll);
-  if (st?.state === 'running') poll = window.setTimeout(() => void load(), 1200);
-}
-
-async function start(mode: 'bin' | 'ipa') {
-  if (!app.value || starting.value) return;
-  starting.value = mode; error.value = '';
-  try {
-    const data = await A.startDump(app.value, mode);
-    if (data.error || data.started === false) throw new Error(data.error || '已有任务在进行');
-    toast(mode === 'bin' ? '已开始导出解密二进制' : '已开始导出 IPA');
-    await load();
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '无法启动 Dump';
-  } finally { starting.value = ''; }
-}
-
-watch(app, () => { window.clearTimeout(poll); void load(); }, { immediate: true });
-onUnmounted(() => window.clearTimeout(poll));
+onMounted(() => {
+  void refresh(); void refreshImages();
+  poll = window.setInterval(() => { if (running.value) void refresh(); }, 2000);
+});
+onUnmounted(() => clearInterval(poll));
+watch(() => store.chosenPkg, () => { void refresh(); void refreshImages(); });
 </script>
 
 <template>
-  <main class="tool-page dumppane">
-    <div class="tool-header"><div><h2>Dump</h2><p>{{ app || '无当前应用' }} 的进程镜像和砸壳产物。</p></div>
-      <span class="pill tool-status">{{ loading ? '读取中' : error ? '读取失败' : stateText(status?.state) }}</span></div>
-    <div v-if="error" class="notice warn">{{ error }}</div>
-
-    <section class="tool-surface" style="margin-bottom:12px">
-      <h3>任务</h3>
-      <div class="tool-content">
+  <div class="dumppane">
+    <h1 class="board-heading">Dump</h1>
+    <p v-if="!store.chosenPkg" class="directory-unavailable">选择应用后对它执行解密 Dump。</p>
+    <template v-else>
+      <section class="dump-card">
+        <div class="dump-card-head">
+          <h3>任务状态</h3>
+          <button type="button" class="compact-action" @click="refresh">刷新</button>
+        </div>
+        <p class="set-status">{{ stateText }}</p>
         <div class="dump-actions">
-          <button type="button" class="hbtn" :disabled="!!starting || status?.state === 'running'" @click="start('bin')">
-            {{ starting === 'bin' ? '启动中' : '导出解密二进制 zip' }}</button>
-          <button type="button" class="hbtn" :disabled="!!starting || status?.state === 'running'" @click="start('ipa')">
-            {{ starting === 'ipa' ? '启动中' : '导出 IPA' }}</button>
-          <button type="button" class="hbtn" @click="load">刷新</button>
+          <n-button size="small" type="primary" secondary :disabled="starting || running" @click="run('bin')">Dump 主二进制</n-button>
+          <n-button size="small" secondary :disabled="starting || running" @click="run('ipa')">Dump IPA</n-button>
+          <n-button v-if="status.binReady" size="small" tertiary @click="download('bin')">下载 {{ status.binName || 'bin' }}</n-button>
+          <n-button v-if="status.ipaReady" size="small" tertiary @click="download('ipa')">下载 {{ status.ipaName || 'ipa' }}</n-button>
         </div>
-        <p class="tool-note" style="margin-top:10px">
-          状态：{{ stateText(status?.state) }}<template v-if="status?.stage"> · {{ status.stage }}</template>
-          <template v-if="status?.state === 'running'"> · {{ status.progress ?? 0 }}%</template>
-          <template v-if="status?.error"> · {{ status.error }}</template>
-        </p>
-        <div class="dump-downloads">
-          <a v-if="status?.binReady && app" class="hbtn" :href="A.dumpDownloadUrl(app, 'bin')" :download="status.binName || 'decrypted.zip'">下载 {{ status.binName || 'bin 产物' }}</a>
-          <a v-if="status?.ipaReady && app" class="hbtn" :href="A.dumpDownloadUrl(app, 'ipa')" :download="status.ipaName || 'decrypted.ipa'">下载 {{ status.ipaName || 'IPA 产物' }}</a>
-        </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="tool-surface">
-      <h3>进程镜像</h3>
-      <table class="tool-table">
-        <thead><tr><th>名称</th><th>类型</th><th>加密</th><th>大小</th><th>操作</th></tr></thead>
-        <tbody>
-          <tr v-for="img in images" :key="img.name">
-            <td class="mono">{{ img.name }}</td>
-            <td>{{ img.kind || '—' }}</td>
-            <td>{{ img.encrypted ? '加密' : '明文' }}</td>
-            <td>{{ fmtSize(img.size) }}</td>
-            <td><a v-if="app" class="dl" :href="A.dumpImageUrl(app, img.name)" :download="img.name + '-decrypted'">即时下载</a></td>
-          </tr>
-          <tr v-if="!loading && !images.length"><td colspan="5" class="tool-note">没有可导出的进程镜像。</td></tr>
-        </tbody>
-      </table>
-    </section>
-  </main>
+      <section class="dump-card">
+        <div class="dump-card-head">
+          <h3>进程模块 · {{ images.length }}</h3>
+          <button type="button" class="compact-action" @click="refreshImages">刷新</button>
+        </div>
+        <p v-if="imagesError" class="set-status">{{ imagesError }}</p>
+        <table v-if="images.length" class="directory-list-table">
+          <thead><tr><th>模块</th><th>大小</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="img in images" :key="img.name">
+              <td><span class="mono">{{ img.name }}</span><span v-if="img.encrypted" class="enc-tag">加密</span></td>
+              <td>{{ fmtSize(img.size) }}</td>
+              <td><button type="button" class="compact-action" @click="downloadImage(img)">下载</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </template>
+  </div>
 </template>
+
+<style scoped>
+.dumppane { padding: 18px 22px; overflow: auto; display: flex; flex-direction: column; gap: 14px; }
+.dump-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--surface);
+}
+.dump-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.dump-card-head h3 { margin: 0; font-size: 13px; }
+.dump-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+</style>
