@@ -227,6 +227,8 @@ idh call list_sessions --endpoint usb:<udid>
 
 `idh panel` 在本机打开电脑面板。面板先选择设备，再选择 App；除事件和注入范围外，也会通过设备代理读取在线进程的文件、符号和 Dump 接口。文件/镜像下载经本机面板中转，设备不可达或进程不在线时显示真实错误，不显示模拟数据。
 
+面板前端在 `panel/`（Vue3 + vite，`vite-plugin-singlefile` 打成单文件），改完源码后 `npm run build`，产物 `src/idh/panel.html` 与源码一起提交。产物里的 `data-v-*` 作用域哈希由 `@vitejs/plugin-vue` 版本与源码共同决定，重装依赖后重建会出现「只有哈希不同」的 diff；没改源码时不要顺手提交这类 diff。
+
 ## 连接状态
 
 - `devices` / `connect` 先探测 `GET /health`，认不出守护进程时再探测 `/api/stats`。离线地址显示
