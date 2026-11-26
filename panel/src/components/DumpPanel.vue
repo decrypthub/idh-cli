@@ -97,6 +97,7 @@ watch(() => store.chosenPkg, () => { void refresh(); void refreshImages(); });
 
 <template>
   <div class="dumppane">
+    <h1 class="sr-only">Dump</h1>
     <p v-if="!store.chosenPkg" class="directory-unavailable">选择应用后对它执行解密 Dump。</p>
     <template v-else>
       <section class="dump-card">
