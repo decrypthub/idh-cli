@@ -909,6 +909,9 @@ _PANEL_DEVICE_READ = {"/api/apps", "/api/injection-scope"}
 _PANEL_DEVICE_WRITE = {"/api/injection-scope", "/api/apps/relaunch", "/api/apps/clear"}
 _PANEL_DEVICES_ROUTE = "/api/devices"
 _BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}")
+# 设备应答上限。文件预览的 hexdump 也走这条 JSON 通道（64KB 文件的 dump 约 260KB），
+# 原来按 65537 字节读会被截断，json.loads 直接失败，表现为预览 502 空响应。
+_PANEL_JSON_MAX_BYTES = 16 * 1024 * 1024
 
 
 def _panel_request(
@@ -921,7 +924,9 @@ def _panel_request(
     with contextlib.closing(HTTPConnection(endpoint.primary_address, endpoint.port, timeout=10)) as connection:
         connection.request("GET" if body is None else "POST", path, body=body, headers=headers)
         response = connection.getresponse()
-        payload = response.read(65537)
+        payload = response.read(_PANEL_JSON_MAX_BYTES + 1)
+        if len(payload) > _PANEL_JSON_MAX_BYTES:
+            raise ValueError(f"device response too large: {path}")
         return response.status, json.loads(payload) if payload else None
 
 

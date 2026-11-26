@@ -75,10 +75,10 @@ const canControl = computed(() => store.scope.has(store.chosenPkg));
           </div>
           <div class="app-dialog-actions">
             <template v-if="canControl">
-              <button type="button" @click="control()">重启</button>
+              <n-button size="small" @click="control()">重启</n-button>
             </template>
-            <n-button quaternary circle aria-label="关闭应用窗口" @click="emit('close')">
-              <n-icon size="14" :component="CloseOutline" />
+            <n-button text aria-label="关闭应用窗口" class="app-close" @click="emit('close')">
+              <n-icon size="18" :component="CloseOutline" />
             </n-button>
           </div>
         </div>
@@ -104,9 +104,9 @@ const canControl = computed(() => store.scope.has(store.chosenPkg));
                   <span class="app-state" :class="{ on: store.scope.has(a.bundleId) }">
                     {{ store.scope.has(a.bundleId) ? '已注入' : '' }}</span>
                 </button>
-                <button type="button" class="app-inject" title="允许注入" :aria-pressed="store.scope.has(a.package)"
+                <n-switch size="small" class="app-inject-sw" aria-label="允许注入" :value="store.scope.has(a.bundleId)"
                   :disabled="a.bundleId === store.chosenPkg && store.scope.has(a.bundleId)"
-                  @click="toggleInject(a.bundleId, !store.scope.has(a.bundleId))"></button>
+                  @update:value="on => toggleInject(a.bundleId, !!on)" />
               </div>
             </template>
           </n-virtual-list>

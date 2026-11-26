@@ -62,7 +62,11 @@ export const isRunning = (v: unknown): boolean => v === true || v === 1 || v ===
 
 export interface FsEntry { name: string; type: string; size?: number; mtime?: number }
 export interface FsListReply { path?: string; parent?: string | null; entries?: FsEntry[]; limited?: boolean; error?: string }
-export interface FsPreviewReply { ok?: boolean; text?: string; hex?: string; size?: number; truncated?: boolean; binary?: boolean; error?: string }
+// idhjd 的预览只回一种形态：format=text 是文本，format=hex 是已经排好版的 hexdump。
+export interface FsPreviewReply {
+  ok?: boolean; path?: string; text?: string; format?: 'text' | 'hex';
+  size?: number; truncated?: boolean; error?: string;
+}
 
 export interface DumpStatus {
   state?: string; stage?: string; progress?: number; mode?: string;
