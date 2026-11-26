@@ -30,11 +30,12 @@ const ERRORS: Record<string, string> = {
   not_a_device: '这个地址不是设备（像是某个 App 的面板）',
   unknown_device: '列表里已经没有这台设备，请刷新',
   device_unavailable: '连不上该设备',
+  no_saved: '面板以 --no-saved 启动，不能修改设备列表',
   unreachable: '连接不通',
 };
 function describeError(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
-  return ERRORS[raw] ?? raw;
+  return ERRORS[raw] ?? `操作失败：${raw}`;
 }
 
 async function add() {

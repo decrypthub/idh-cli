@@ -437,6 +437,11 @@ def _run_disconnect(args: argparse.Namespace) -> int:
     if not removed:
         print(f"idh: no saved connection found: {args.endpoint}", file=sys.stderr)
         return 1
+    # 删掉的正是当前选中：指针交给剩下的第一台设备，否则 `idh reconnect` 无参数时会指向已删除的地址
+    selected = load_selected()
+    if selected and selected.casefold() == AppEndpoint.from_url(args.endpoint).mcp_url.casefold():
+        remaining = next(iter(_saved_devices()), None)
+        save_selected(remaining.mcp_url if remaining else "")
     print(f"removed: {AppEndpoint.from_url(args.endpoint).base_url}")
     return 0
 
@@ -944,6 +949,10 @@ def _run_panel(args: argparse.Namespace) -> int:
              if e.kind == "device" and e.properties.get("status") == "online"),
             None,
         )  # 零设备时为 None：面板照常起，由页面里的设备入口添加
+    if args.endpoint and endpoint is None:
+        # 显式点名了目标却一台都没解析出来：别让人对着空面板猜（沿用已保存选择时才进恢复模式）
+        print(f"idh: no reachable device for --endpoint {' '.join(args.endpoint)}", file=sys.stderr)
+        return 2
     if endpoint is not None and endpoint.kind != "device":
         print("idh: panel serves a device connection", file=sys.stderr)
         return 2
@@ -1072,6 +1081,11 @@ def _run_panel(args: argparse.Namespace) -> int:
                 self.write_json(400, {"error": "invalid_device_request"})
                 return
             action = request.get("action")
+            if action in {"add", "remove"} and args.no_saved:
+                # --no-saved 是「忽略已保存连接」，此刻写/删配置文件等于自相矛盾：
+                # 加进去的设备不会出现在本会话的列表里（池子不含已保存项），看起来像失败。
+                self.write_json(400, {"error": "no_saved"})
+                return
             if action == "add":
                 udid = request.get("usb")
                 try:
@@ -1144,8 +1158,14 @@ def _run_panel(args: argparse.Namespace) -> int:
                     self.write_json(404, {"error": "unknown_device"})
                     return
                 if current["endpoint"] and current["endpoint"].mcp_url.casefold() == target.casefold():
-                    # 删掉的正是当前设备：落到剩下这台，并把 selected 指针一起搬过去
-                    fallback = next(iter(device_pool()), None)
+                    # 删掉的正是当前设备：落到剩下的第一台可用设备，并把 selected 指针一起搬过去。
+                    # 必须排掉 target 本身（同一地址也可能来自 --endpoint，池子里还留着它）
+                    # 和 App 面板（kind=="app" 不是设备）。
+                    fallback = next(
+                        (e for e in device_pool()
+                         if e.kind != "app" and e.mcp_url.casefold() != target.casefold()),
+                        None,
+                    )
                     current["endpoint"] = fallback
                     save_selected(fallback.mcp_url if fallback else "")
                 self.write_json(200, device_records())

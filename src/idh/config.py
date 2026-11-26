@@ -57,6 +57,11 @@ def load_saved_endpoints(path: Path | None = None) -> list[AppEndpoint]:
             if kind is not None and kind not in _KINDS:
                 raise ValueError(f"connection config has an unknown kind: {target}")
             endpoint = AppEndpoint.from_url(url).with_kind(kind if isinstance(kind, str) else None)
+            # USB 条目的 loopback 转发口每次重新挂载都会变，只有记住 udid 才能在下次启动
+            # 重新拉起转发（resolve_endpoint 靠 properties["usb_udid"] 判断）。
+            usb = item.get("usb")
+            if isinstance(usb, str) and usb:
+                endpoint = endpoint.with_properties({"transport": "usb", "usb_udid": usb})
             loaded.append(endpoint)
         return loaded
     except ValueError as exc:
@@ -120,7 +125,11 @@ def replace_endpoint(
     updated: list[AppEndpoint] = []
     seen: set[str] = set()
     for item in existing:
-        candidate = endpoint if item.mcp_url.casefold() == canonical else item
+        if item.mcp_url.casefold() == canonical:
+            # 与 save_endpoint 同一规则：地址一定换新；新条目没带可信 kind 时继承旧的
+            candidate = endpoint if endpoint.kind in _KINDS else endpoint.with_kind(item.kind)
+        else:
+            candidate = item
         key = candidate.mcp_url.casefold()
         if key in seen:
             # 旧地址与新地址同时存在时只保留一条
@@ -169,13 +178,15 @@ def _write_endpoints(
         except (OSError, UnicodeError, json.JSONDecodeError):
             pass
     items = sorted(endpoints, key=lambda item: item.mcp_url.casefold())
-    if any(item.kind for item in items):
+    # 有 kind 或带 USB 身份就必须用 v2（v1 只是一串地址，存不下这两样）
+    if any(item.kind or item.properties.get("usb_udid") for item in items):
         payload: dict[str, object] = {
             "version": CONFIG_VERSION_KIND,
             "endpoints": [
                 {
                     "url": item.mcp_url,
                     **({"kind": item.kind} if item.kind else {}),
+                    **({"usb": item.properties["usb_udid"]} if item.properties.get("usb_udid") else {}),
                 }
                 for item in items
             ],

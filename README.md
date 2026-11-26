@@ -46,6 +46,19 @@ idh disconnect 192.168.100.65:8088
 idh disconnect --all
 ```
 
+设备掉线或换了转发口（USB 重新插拔最常见）时重连，不用先删再加：
+
+```bash
+idh reconnect                          # 重连当前选中/唯一那台
+idh reconnect 192.168.100.65:8088      # 指定地址或连接 id
+idh reconnect --json                   # 脚本化：ok/online/address/moved_from
+```
+
+`reconnect` 会重新解析地址并探活；USB 条目的 loopback 转发口变了会就地改写保存项（连带
+`selected`），设备仍不可达时退出码为 1 并打印原因。命令行里添加/删除仍用
+`idh connect` / `idh disconnect`。电脑面板的设备下拉菜单提供同样的添加、删除和重连；
+面板以 `--no-saved` 启动时不接受增删（避免写进它声明忽略的配置）。
+
 `connect` 先请求 `GET /health`。应答是 `idhjd` 时保存为 `device`，`apps` 为空也算在线。否则再验证 `/api/stats`，有进程就保存为 `app`。暂时离线时用 `--force` 保存地址；探测失败不清除已保存的种类。
 可通过 `IDH_CONFIG_PATH` 修改配置位置，或用 `--no-saved` 让单次命令忽略已保存连接。
 

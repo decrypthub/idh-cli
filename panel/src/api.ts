@@ -116,7 +116,9 @@ const DEVICE_TIMEOUT_MS = 30000;
 const postDevice = <T = unknown>(body: unknown) => post<T>('/api/devices', body, DEVICE_TIMEOUT_MS);
 
 // ---- 设备 ----
-export const getDevices = () => api<DevicesReply>('/api/devices');
+// 列表同理要放宽：服务端对每台设备做 health + /api/stats 两次探测（各 3s），设备多时
+// 默认 8s 会偶发超时，导致「删掉的设备还在列表里」这种看起来像缓存的假象。
+export const getDevices = () => api<DevicesReply>('/api/devices', undefined, DEVICE_TIMEOUT_MS);
 export const selectDevice = (id: string) => postDevice<DevicesReply>({ action: 'select', id });
 export const addDevice = (address: string) => postDevice<DevicesReply>({ action: 'add', address });
 export const addUsbDevice = (udid: string) => postDevice<DevicesReply>({ action: 'add', usb: udid });
