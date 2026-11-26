@@ -36,11 +36,14 @@ export interface DhApp {
   bundleId: string; name?: string; execName?: string;
   kind?: string; running?: boolean;
 }
-/** /api/apps 的 recorded[]：idhjd 侧已记录过事件的 App 清单，含当前是否有活进程。 */
+/** /api/apps 的 recorded[]：idhjd 侧已记录过事件的 App 清单（服务端只返回 total>0 的，
+ *  并按 updated_ms DESC 排序），含当前是否有活进程。 */
 export interface DhRecordedApp {
   bundleId: string;
-  /** idhjd 用 NSNumber(char) 发布尔，JSON 化成 1/0；apps[] 的 running 是真布尔。两种都要认。 */
+  /** idhjd 用 int 装箱（@(live != nil) → numberWithInt），JSON 化成 1/0；
+   *  apps[] 的 running 是 BOOL 装箱，JSON 化成 true/false。两种都要认。 */
   running?: boolean | number;
+  // 以下字段对应真实 payload，前端目前只消费 bundleId/running。
   pid?: number; count?: number; lastSeq?: number; updatedAtMs?: number;
   byCategory?: number[]; processGeneration?: string; httpPort?: number;
 }

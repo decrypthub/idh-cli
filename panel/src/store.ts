@@ -192,8 +192,9 @@ export async function refreshDevices() {
 }
 
 // 自动选应用：capLoad/pollNewEvents 都要求 chosenPkg 非空，没人赋值时四个板块永远是空的。
-// recorded[] 是 idhjd 的「已记录 App」清单，取其中 running 的第一个作为默认选择。
-// 只移动自己挑的那一个：用户手动选择或深链接管后 autoPickedPkg 清空，自动逻辑不再插手。
+// 候选来自 idhjd 的 recorded[]（只含 total>0 的 App，服务端按 updated_ms DESC 排序），
+// 所以 recorded[0] 就是最近还有事件写入的那个。优先正在运行的，其次最近有记录的。
+// 只移动自己挑的那一个：显式选择（弹窗点选、#app= 深链）会清空 autoPickedPkg 接管选择权。
 let autoPickedPkg = '';
 
 export async function chooseDevice(key: string) {
@@ -213,9 +214,10 @@ export async function chooseDevice(key: string) {
   }
 }
 
-function firstRunningRecorded(list?: A.DhRecordedApp[]): string {
-  const hit = (list ?? []).find(a => a?.bundleId && A.isRunning(a.running));
-  return hit?.bundleId ?? '';
+function autoPickTarget(list?: A.DhRecordedApp[]): string {
+  const rec = list ?? [];
+  const running = rec.find(a => a?.bundleId && A.isRunning(a.running));
+  return running?.bundleId ?? rec[0]?.bundleId ?? '';
 }
 function applyPackage(pkg: string) {
   if (store.chosenPkg === pkg) return;
@@ -237,8 +239,12 @@ export async function refreshScope() {
 }
 
 export async function refreshApps() {
+  const dev = store.selectedDeviceKey;
   try {
     const r = await A.getApps();
+    // 设备已切走：这批响应属于上一台设备，不能写回——否则会把 A 设备的包选到 B 上。
+    // 启动时 selectedDeviceKey 还没定（空串），此时放行：服务端自己维护 endpoint，两边一致。
+    if (dev !== '' && store.selectedDeviceKey !== dev) return;
     store.apps = r.apps ?? [];
     if (Array.isArray(r.scope)) store.scope = new Set(r.scope);
     store.appsError = r.error ?? '';
@@ -250,10 +256,20 @@ export async function refreshApps() {
       if (hit || store.apps.length) deepAppDone = true;
       if (hit) choosePackage(hit.bundleId);
     }
-    // 深链之后再自动选：显式 #app= 永远优先，只在没有任何选择（或当前选择仍是自动挑的）时兜底
-    if (!store.chosenPkg || store.chosenPkg === autoPickedPkg) {
-      const pick = firstRunningRecorded(r.recorded);
-      if (pick && pick !== store.chosenPkg) {
+    // 深链之后再自动选：显式 #app= 永远优先，只在没有任何选择时兜底
+    const recorded = r.recorded ?? [];
+    if (!store.chosenPkg) {
+      const pick = autoPickTarget(recorded);
+      if (pick) {
+        autoPickedPkg = pick;
+        applyPackage(pick);
+      }
+    } else if (store.chosenPkg === autoPickedPkg &&
+               !recorded.some(a => a.bundleId === store.chosenPkg)) {
+      // 自己挑的那个已不在记录里（移出注入范围、记录被清）：换一个，别停在空板块。
+      // 仍在记录里、只是停止运行的保持不动——历史记录还能看，不能每 15s 把列表清一次。
+      const pick = autoPickTarget(recorded);
+      if (pick) {
         autoPickedPkg = pick;
         applyPackage(pick);
       }
