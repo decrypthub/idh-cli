@@ -2,7 +2,7 @@
 import { useAppearance, isDark } from './appearance';
 useAppearance();
 import { computed } from 'vue';
-import { darkTheme, NAlert, type GlobalThemeOverrides } from 'naive-ui';
+import { darkTheme, zhCN, dateZhCN, NAlert, type GlobalThemeOverrides } from 'naive-ui';
 import type { Component } from 'vue';
 import {
   LockClosedOutline, HardwareChipOutline, WifiOutline, KeyOutline, FolderOutline, CubeOutline,
@@ -87,7 +87,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
 </script>
 
 <template>
-  <n-config-provider :theme="isDark ? darkTheme : null" :theme-overrides="themeOverrides">
+  <n-config-provider :theme="isDark ? darkTheme : null" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
   <div class="app-shell">
     <aside class="side" :class="{ rail: panelDisplay.rail }">
       <div class="side-brand">

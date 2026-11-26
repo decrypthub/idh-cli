@@ -30,7 +30,14 @@ export interface DhDevice {
   id: string; address: string; kind: string; transport?: string | null;
   online: boolean | null; selected: boolean;
 }
-export interface DevicesReply { devices?: DhDevice[]; usb?: unknown[]; selected?: string }
+/** 重连结果：内核侧重新解析并探活后的结论。 */
+export interface DeviceReconnect {
+  id?: string; online?: boolean; movedFrom?: string | null; error?: string | null;
+}
+export interface DevicesReply {
+  devices?: DhDevice[]; usb?: string[]; selected?: string;
+  reconnect?: DeviceReconnect; error?: string;
+}
 
 export interface DhApp {
   bundleId: string; name?: string; execName?: string;
@@ -86,21 +93,35 @@ export async function api<T = unknown>(path: string, init?: RequestInit, timeout
     const res = await fetch(path, { ...init, signal: AbortSignal.timeout(timeoutMs), cache: 'no-store' });
     const ms = performance.now() - t0;
     notePerf(label, ms);
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    if (!res.ok) {
+      // 服务端的 {"error": "..."} 比 "400 Bad Request" 有用得多：设备增删的失败原因要靠它
+      let detail = '';
+      try {
+        const body = (await res.json()) as { error?: unknown };
+        if (body && typeof body.error === 'string') detail = body.error;
+      } catch { /* 错误体不一定是 JSON */ }
+      throw new Error(detail || `${res.status} ${res.statusText}`);
+    }
     return (await res.json()) as T;
   } catch (e) {
     notePerf(label, performance.now() - t0);
     throw e;
   }
 }
-const post = <T = unknown>(path: string, body: unknown) =>
-  api<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const post = <T = unknown>(path: string, body: unknown, timeoutMs?: number) =>
+  api<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, timeoutMs);
+// 设备变更类请求：服务端要先探活目标设备（3s），再把列表里每台重新探活一次（3s，并行），
+// 用默认 8s 会在 4 台设备时偶发超时——客户端取消但服务端已经写盘，表现为「报错但设备已加上」。
+const DEVICE_TIMEOUT_MS = 30000;
+const postDevice = <T = unknown>(body: unknown) => post<T>('/api/devices', body, DEVICE_TIMEOUT_MS);
 
 // ---- 设备 ----
 export const getDevices = () => api<DevicesReply>('/api/devices');
-export const selectDevice = (id: string) => post<DevicesReply>('/api/devices', { action: 'select', id });
-export const addDevice = (address: string) => post<DevicesReply>('/api/devices', { action: 'add', address });
-export const addUsbDevice = (udid: string) => post<DevicesReply>('/api/devices', { action: 'add', usb: udid });
+export const selectDevice = (id: string) => postDevice<DevicesReply>({ action: 'select', id });
+export const addDevice = (address: string) => postDevice<DevicesReply>({ action: 'add', address });
+export const addUsbDevice = (udid: string) => postDevice<DevicesReply>({ action: 'add', usb: udid });
+export const removeDevice = (id: string) => postDevice<DevicesReply>({ action: 'remove', id });
+export const reconnectDevice = (id: string) => postDevice<DevicesReply>({ action: 'reconnect', id });
 
 // ---- 应用与注入范围（作用于当前选中设备）----
 export const getApps = () => api<AppsReply>('/api/apps');

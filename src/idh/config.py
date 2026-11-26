@@ -102,6 +102,37 @@ def remove_endpoint(value: str, path: Path | None = None) -> bool:
     return True
 
 
+def replace_endpoint(
+    value: str, endpoint: AppEndpoint, path: Path | None = None
+) -> bool:
+    """Swap one saved address for another in a single atomic write.
+
+    USB endpoints get a fresh loopback forwarder port on every re-attach, so a saved
+    address can go stale while the device is still connected. Rewriting the entry
+    (instead of remove-then-save) keeps the file consistent and carries the
+    ``selected`` pointer over to the new address.
+    """
+    target = path or config_path()
+    canonical = AppEndpoint.from_url(value).mcp_url.casefold()
+    existing = load_saved_endpoints(target)
+    if not any(item.mcp_url.casefold() == canonical for item in existing):
+        return False
+    updated: list[AppEndpoint] = []
+    seen: set[str] = set()
+    for item in existing:
+        candidate = endpoint if item.mcp_url.casefold() == canonical else item
+        key = candidate.mcp_url.casefold()
+        if key in seen:
+            # 旧地址与新地址同时存在时只保留一条
+            continue
+        seen.add(key)
+        updated.append(candidate)
+    old_selected = load_selected(target)
+    selected = endpoint.mcp_url if old_selected and old_selected.casefold() == canonical else None
+    _write_endpoints(updated, target, selected=selected)
+    return True
+
+
 def clear_endpoints(path: Path | None = None) -> int:
     target = path or config_path()
     existing = load_saved_endpoints(target)

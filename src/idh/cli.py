@@ -23,6 +23,7 @@ from .config import (
     load_saved_endpoints,
     load_selected,
     remove_endpoint,
+    replace_endpoint,
     save_endpoint,
     save_selected,
 )
@@ -95,6 +96,54 @@ def _probed_endpoints(endpoints: Sequence[AppEndpoint], *, timeout: float = 1.0)
         return []
     with ThreadPoolExecutor(max_workers=min(8, len(endpoints))) as pool:
         return list(pool.map(lambda e: probe_endpoint(resolve_endpoint(e), timeout=timeout), endpoints))
+
+
+def _reconnect_endpoint(entry: AppEndpoint, *, timeout: float = 5.0) -> AppEndpoint:
+    """重连一台已保存设备：重新解析转发地址并探活，地址漂移时原地改写保存项。
+
+    USB 的 loopback 转发口在设备重新挂载后会变，所以探活必须走 resolve_endpoint；
+    解析出的地址和保存项不一致时用一次写入替换，避免保存项一直指向已经退出的端口。
+    面板与 CLI 共用这一处实现，两边看到的是同一份结果。
+    """
+    probed = probe_endpoint(resolve_endpoint(entry), timeout=timeout)
+    if probed.mcp_url.casefold() != entry.mcp_url.casefold():
+        replace_endpoint(entry.mcp_url, probed)
+    return probed
+
+
+def _saved_devices() -> list[AppEndpoint]:
+    return [entry for entry in load_saved_endpoints() if entry.kind != "app"]
+
+
+def _resolve_saved_device(target: str | None, *, command: str) -> AppEndpoint:
+    """在已保存设备里定位一台（不要求在线——重连正是为了把离线的捞回来）。"""
+    saved = _saved_devices()
+    if not saved:
+        raise SystemExit(f"idh: no saved device for {command}; run: idh connect <device IP>:8088")
+    if target and target.strip():
+        matches = [entry for entry in saved if _address_matches(entry, target)]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise SystemExit(
+                f"idh: {target} matches multiple saved devices; pass one address or connection id\n"
+                + "\n".join(f"  {_endpoint_label(entry)}" for entry in matches)
+            )
+        raise SystemExit(
+            f"idh: no saved device matches {target}\n"
+            + "\n".join(f"  {_endpoint_label(entry)}" for entry in saved)
+        )
+    selected = load_selected()
+    if selected:
+        for entry in saved:
+            if entry.mcp_url.casefold() == selected.casefold():
+                return entry
+    if len(saved) == 1:
+        return saved[0]
+    raise SystemExit(
+        f"idh: {len(saved)} saved devices; specify one\n"
+        + "\n".join(f"  {_endpoint_label(entry)}" for entry in saved)
+    )
 
 
 def _endpoint_label(endpoint: AppEndpoint) -> str:
@@ -219,6 +268,11 @@ def build_parser() -> argparse.ArgumentParser:
     devices = subparsers.add_parser("devices", help="list saved devices and --endpoint targets")
     devices.add_argument("--json", action="store_true", help="output JSON")
     _add_endpoint_options(devices)
+
+    reconnect = subparsers.add_parser("reconnect", help="re-probe a saved device and reconnect it")
+    reconnect.add_argument("target", nargs="?", help="address or connection id; omit for the selected/only saved device")
+    reconnect.add_argument("--timeout", type=float, default=5.0, help="HTTP probe timeout in seconds")
+    reconnect.add_argument("--json", action="store_true", help="output JSON")
 
     inventory_parser = subparsers.add_parser("status", help="read-only connection and live App facts for desktop Agents")
     inventory_parser.add_argument("--json", action="store_true")
@@ -394,6 +448,35 @@ def _usb_available(endpoints: Sequence[AppEndpoint]) -> list[dict]:
     except UsbMuxError:
         return []
     return [device for device in devices if device["udid"] not in saved]
+
+
+def _run_reconnect(args: argparse.Namespace) -> int:
+    entry = _resolve_saved_device(args.target, command="reconnect")
+    probed = _reconnect_endpoint(entry, timeout=max(0.1, args.timeout))
+    online = probed.properties.get("status") == "online"
+    app_count = probed.properties.get("app_count")
+    result = {
+        "ok": online,
+        "online": online,
+        "id": probed.mcp_url,
+        "address": probed.base_url,
+        "kind": probed.kind,
+        "apps": int(app_count) if isinstance(app_count, str) and app_count.isdigit() else None,
+        "moved_from": entry.mcp_url if entry.mcp_url != probed.mcp_url else None,
+        # 连接层失败时 probe 不带 error 字段（只有 invalid_stats 那类才带），这里给个确切原因
+        "error": probed.properties.get("error") or (None if online else "unreachable"),
+    }
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif online:
+        apps = f"  apps {result['apps']}" if result["apps"] is not None else ""
+        moved = f" (moved from {result['moved_from']})" if result["moved_from"] else ""
+        print(f"reconnected: {probed.base_url}{moved}{apps}")
+        print(f"  MCP: {probed.mcp_url}")
+    else:
+        reason = result["error"] or "unreachable"
+        print(f"idh: device still unreachable: {entry.base_url} ({reason})", file=sys.stderr)
+    return 0 if online else 1
 
 
 def _run_devices(args: argparse.Namespace) -> int:
@@ -848,6 +931,9 @@ def _panel_blob(endpoint: AppEndpoint, path: str, *, accept: str = "image/png") 
 def _run_panel(args: argparse.Namespace) -> int:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+    # manual_endpoints 只放命令行显式给的，device_pool 用它区分「本次指定」和「从配置读到的」：
+    # 后者必须每次重读文件，否则面板删掉设备后列表要等重启才消失。
+    manual_endpoints = _manual_endpoints(args.endpoint, include_saved=False)
     endpoints = _manual_endpoints(args.endpoint, include_saved=not args.no_saved)
     try:
         endpoint = _resolve_device(endpoints, None, command="panel")
@@ -879,10 +965,13 @@ def _run_panel(args: argparse.Namespace) -> int:
     current = {"endpoint": endpoint}
 
     def device_pool() -> list[AppEndpoint]:
-        merged = {e.mcp_url.casefold(): e for e in endpoints}
-        for entry in load_saved_endpoints():
-            if entry.kind == "device":
-                merged[entry.mcp_url.casefold()] = entry
+        merged = {e.mcp_url.casefold(): e for e in manual_endpoints}
+        if not args.no_saved:
+            for entry in load_saved_endpoints():
+                # kind 只有探活确认是 idhjd 之后才会变成 device；离线添加的设备 kind 为空，
+                # 也必须留在列表里，否则「添加 → 离线 → 消失 → 无法重连」。
+                if entry.kind != "app":
+                    merged[entry.mcp_url.casefold()] = entry
         return list(merged.values())
 
     def device_records() -> dict:
@@ -910,6 +999,18 @@ def _run_panel(args: argparse.Namespace) -> int:
             code, health = _panel_request(current["endpoint"], "/health")
             if code != 200 or not isinstance(health, dict) or health.get("service") != "idhjd":
                 raise UsageError("idh: panel serves a device connection")
+    except UsageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except (HTTPException, OSError, ValueError) as exc:
+        if args.endpoint:
+            # 显式 --endpoint 指定了目标却连不上：按原来的语义直接失败，别让人对着空面板猜
+            print(str(exc), file=sys.stderr)
+            return 2
+        # 沿用的是已保存的当前设备：离线不能拦启动，设备菜单正是用来把它重连回来的。
+        print(f"idh: selected device unreachable at startup ({exc}); starting in recovery mode",
+              file=sys.stderr)
+    try:
         panel_files = files("idh")
         device_url = current["endpoint"].base_url if current["endpoint"] else ""
         metadata = f'<meta name="idh-device-endpoint" content="{device_url}">'.encode()
@@ -986,7 +1087,42 @@ def _run_panel(args: argparse.Namespace) -> int:
                     self.write_json(400, {"error": "not_a_device"})
                     return
                 save_endpoint(probed)
+                # 面板可以从零设备启动，加进来的第一台在线设备直接成为当前设备，
+                # 否则 /api/apps 仍然 502（current["endpoint"] 为空）而页面以为已选中。
+                if current["endpoint"] is None and probed.properties.get("status") == "online":
+                    current["endpoint"] = probed
+                    save_selected(probed.mcp_url)
                 self.write_json(200, device_records())
+                return
+            if action == "reconnect":
+                wanted = str(request.get("id") or "")
+                if not wanted and current["endpoint"] is not None:
+                    wanted = current["endpoint"].mcp_url
+                entry = next(
+                    (e for e in device_pool() if e.mcp_url.casefold() == wanted.casefold()),
+                    None,
+                )
+                if entry is None:
+                    self.write_json(404, {"error": "unknown_device"})
+                    return
+                try:
+                    probed = _reconnect_endpoint(entry, timeout=5.0)
+                except (ValueError, OSError):
+                    self.write_json(502, {"error": "device_unavailable"})
+                    return
+                if current["endpoint"] is not None and (
+                    current["endpoint"].mcp_url.casefold() == entry.mcp_url.casefold()
+                ):
+                    current["endpoint"] = probed
+                online = probed.properties.get("status") == "online"
+                payload = device_records()
+                payload["reconnect"] = {
+                    "id": probed.mcp_url,
+                    "online": online,
+                    "movedFrom": None if entry.mcp_url == probed.mcp_url else entry.mcp_url,
+                    "error": None if online else (probed.properties.get("error") or "unreachable"),
+                }
+                self.write_json(200, payload)
                 return
             target = str(request.get("id") or "")
             if action == "select":
@@ -1008,8 +1144,10 @@ def _run_panel(args: argparse.Namespace) -> int:
                     self.write_json(404, {"error": "unknown_device"})
                     return
                 if current["endpoint"] and current["endpoint"].mcp_url.casefold() == target.casefold():
-                    save_selected(next((e.mcp_url for e in load_saved_endpoints() if e.kind == "device"), ""))
-                    current["endpoint"] = next((e for e in load_saved_endpoints() if e.kind == "device"), None)
+                    # 删掉的正是当前设备：落到剩下这台，并把 selected 指针一起搬过去
+                    fallback = next(iter(device_pool()), None)
+                    current["endpoint"] = fallback
+                    save_selected(fallback.mcp_url if fallback else "")
                 self.write_json(200, device_records())
                 return
             self.write_json(400, {"error": "invalid_device_request"})
@@ -1216,6 +1354,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_disconnect(args)
         if args.command == "devices":
             return _run_devices(args)
+        if args.command == "reconnect":
+            return _run_reconnect(args)
         if args.command == "status":
             return _run_status(args)
         if args.command == "tools":

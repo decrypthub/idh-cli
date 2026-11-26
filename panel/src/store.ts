@@ -28,7 +28,10 @@ export const store = reactive({
   capLoading: false,
   // 设备
   devices: [] as DeviceView[],
+  usb: [] as string[],
   devicesFailed: false,
+  // 服务端每次要逐台探活（各 3s 超时），首屏列表可能几秒才出现；空窗期不能谎报「没有设备」
+  devicesLoading: true,
   devicesUpdated: 0,
   // 应用
   apps: [] as A.DhApp[],
@@ -166,6 +169,7 @@ export async function refreshDevices() {
   try {
     const r = await A.getDevices();
     const list = r.devices ?? [];
+    store.usb = Array.isArray(r.usb) ? r.usb : [];
     store.devices = list.map(d => ({
       key: d.id, id: d.id, address: d.address,
       label: d.address.replace(/^https?:\/\//, ''),
@@ -188,6 +192,8 @@ export async function refreshDevices() {
   } catch {
     store.devicesFailed = true;
     store.wsState = 'fail';
+  } finally {
+    store.devicesLoading = false;
   }
 }
 
@@ -228,6 +234,54 @@ function applyPackage(pkg: string) {
 export function choosePackage(pkg: string) {
   autoPickedPkg = '';
   applyPackage(pkg);
+}
+
+// ---- 设备管理（增删重连）：服务端 device_records 是唯一真源，每次改完按它同步 ----
+/** 设备集合变动后对齐本地：服务端已经选好当前设备就直接跟随，否则只重载应用列表。 */
+async function syncAfterDeviceChange() {
+  await refreshDevices();
+  if (!store.devices.length) {
+    // 一台设备都不剩：没有任何数据源，清掉选择与记录，不要留上一台的残影
+    pollGen++;
+    lastLoadedPkg = '';
+    store.chosenPkg = '';
+    autoPickedPkg = '';
+    store.selectedDeviceKey = '';
+    store.capItems = [];
+    store.capLatest = 0;
+    return;
+  }
+  const serverPick = store.devices.find(d => d.selected);
+  if (serverPick && serverPick.key !== store.selectedDeviceKey) {
+    // 服务端把当前设备换掉了（典型：删掉的正是原来那台）——按设备切换处理，重置记录
+    await chooseDevice(serverPick.key);
+    return;
+  }
+  await refreshApps();
+}
+
+export async function addDeviceByAddress(address: string) {
+  const trimmed = address.trim();
+  if (!trimmed) throw new Error('请输入设备地址');
+  await A.addDevice(trimmed);
+  await syncAfterDeviceChange();
+}
+
+export async function addUsbDeviceById(udid: string) {
+  await A.addUsbDevice(udid);
+  await syncAfterDeviceChange();
+}
+
+export async function removeDeviceById(id: string) {
+  await A.removeDevice(id);
+  await syncAfterDeviceChange();
+}
+
+/** 重连：内核重新解析地址并探活。返回服务端的结论，离线时不抛错（由调用方提示）。 */
+export async function reconnectDeviceById(id: string): Promise<A.DeviceReconnect> {
+  const r = await A.reconnectDevice(id);
+  await syncAfterDeviceChange();
+  return r.reconnect ?? {};
 }
 
 // ---- 应用列表：失败保旧值 ----

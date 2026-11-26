@@ -132,6 +132,15 @@
   .device-row .app-item { flex:1; min-width:0; }
   .device-row-actions { flex:none; display:flex; gap:4px; }
   .device-row-actions .dl-link { min-height:28px; padding:0 8px; }
+  .device-act { display:inline-flex; align-items:center; gap:3px; min-height:28px; padding:0 7px; color:var(--ink-2); background:transparent; border:1px solid var(--line-soft); border-radius:4px; font-size:11px; cursor:pointer; }
+  .device-act:hover:not(:disabled) { color:var(--ink); border-color:var(--line); background:var(--surface-3); }
+  .device-act:disabled { opacity:.45; cursor:default; }
+  .device-act.danger:hover:not(:disabled) { color:var(--danger); border-color:var(--danger); }
+  .device-add { display:flex; gap:5px; margin:8px 6px 4px; }
+  .device-add-input { flex:1; min-width:0; padding:0 8px; min-height:28px; color:var(--ink); background:var(--surface-2); border:1px solid var(--line-soft); border-radius:4px; font-size:12px; }
+  .device-add-input:focus { outline:none; border-color:var(--line); }
+  .device-usb-id { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 8px; }
+  .device-error { margin:2px 7px 5px; color:var(--danger); font-size:11px; line-height:1.35; }
   .popover .app-item:disabled { opacity:.55; cursor:default; }
   .app-dialog .app-choices { flex:1; max-height:none; overflow:hidden; min-height:0; padding:8px 10px 12px 8px; display:flex; flex-direction:column; }
   .app-dialog .app-virtual { flex:1; min-height:0; }
