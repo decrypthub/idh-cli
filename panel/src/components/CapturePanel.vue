@@ -311,12 +311,10 @@ function cryptoRow(c: DhEvent) {
 }
 const searchPlaceholder = computed(() =>
   props.kind === 'crypto' ? '搜索 #序号、算法或预览' : '搜索 #序号、操作或预览');
-const BOARD_TITLE: Record<string, string> = { crypto: '加解密', system: '系统', net: '网络', keychain: 'Keychain' };
 </script>
 
 <template>
   <div class="cap-view">
-    <h1 class="board-heading">{{ BOARD_TITLE[kind] }}</h1>
     <div class="filters">
       <div class="toolbar-main">
         <div class="toolbar-search">

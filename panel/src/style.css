@@ -813,8 +813,7 @@ select option{color:var(--ink);background:var(--surface)}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:0s!important}}
 
 
-.board-heading{margin:0;padding:20px 22px 9px;background:var(--surface);font-size:24px;line-height:1.25;font-weight:620;letter-spacing:-.035em}
-.ledger-head{display:none}.cap-view>.filters,.board-wrap>.toolbar{padding:6px 20px 12px}
+.ledger-head{display:none}.cap-view>.filters,.board-wrap>.toolbar{padding:14px 20px 13px}
 .cap-view .toolbar-search{flex:1;max-width:560px}.toolbar-left .btn,.toolbar-right .btn{white-space:nowrap}
 .capture-workspace:not(.detail-open)>.list-pane,.workarea:not(.reading)>.events-panel{width:100%!important;max-width:none;flex:1}
 .capture-workspace:not(.detail-open)>:is(.splitter,.capture-detail-shell),.workarea:not(.reading)>:is(.splitter,.detail-pane){display:none}
@@ -840,7 +839,7 @@ select option{color:var(--ink);background:var(--surface)}
  .workarea:not(.reading) .events-header .hstack{position:absolute;top:2px;right:94px;z-index:1}
 }
 @media(max-width:700px){
- .board-heading{display:none}.board-wrap>.toolbar,.cap-view>.filters{padding:6px 10px}
+ .board-wrap>.toolbar,.cap-view>.filters{padding:8px 10px}
  .cap-view .toolbar-main{display:flex}.cap-view .toolbar-search{flex:1 1 145px;max-width:none}.cap-view .toolbar-actions{flex:none}
  .toolbar-right .toolbar-stat{display:none}.board-wrap>.toolbar{display:flex;gap:5px}.board-wrap .toolbar-left{flex:1 1 145px}.board-wrap .toolbar-right{flex:0 0 auto;width:auto}
  .capture-workspace .list-pane{height:auto}.topbar .app-context{min-width:0}.topbar .menu-chevron{flex:none}

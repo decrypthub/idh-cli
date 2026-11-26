@@ -35,8 +35,6 @@ function resetAllHidden() {
 
 <template>
   <div class="settingspane">
-    <h1 class="board-heading">设置</h1>
-
     <section class="set-card">
       <h3>外观</h3>
       <div class="set-row">
